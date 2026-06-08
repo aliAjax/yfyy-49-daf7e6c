@@ -42,34 +42,6 @@ router.get('/unread-count', (req: AuthRequest, res) => {
   res.json({ unread_count: result.count });
 });
 
-// 获取通知详情
-router.get('/:id', (req: AuthRequest, res) => {
-  const { id } = req.params;
-  
-  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as any;
-  
-  if (!notification || notification.user_id !== req.user!.id) {
-    return res.status(403).json({ message: '无权查看此通知' });
-  }
-
-  res.json({ notification });
-});
-
-// 标记为已读
-router.post('/:id/read', (req: AuthRequest, res) => {
-  const { id } = req.params;
-  
-  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as any;
-  
-  if (!notification || notification.user_id !== req.user!.id) {
-    return res.status(403).json({ message: '无权操作此通知' });
-  }
-
-  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
-
-  res.json({ message: '标记成功' });
-});
-
 // 批量标记为已读
 router.post('/batch-read', (req: AuthRequest, res) => {
   const { ids } = req.body;
@@ -142,6 +114,34 @@ router.get('/logs', (req: AuthRequest, res) => {
   const logs = db.prepare(sql).all(...params);
 
   res.json({ logs, total: total.count, page: Number(page), pageSize: Number(pageSize) });
+});
+
+// 获取通知详情
+router.get('/:id', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  
+  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as any;
+  
+  if (!notification || notification.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权查看此通知' });
+  }
+
+  res.json({ notification });
+});
+
+// 标记为已读
+router.post('/:id/read', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  
+  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as any;
+  
+  if (!notification || notification.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权操作此通知' });
+  }
+
+  db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
+
+  res.json({ message: '标记成功' });
 });
 
 export default router;
