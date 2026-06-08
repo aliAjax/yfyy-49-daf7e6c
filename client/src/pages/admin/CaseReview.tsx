@@ -25,10 +25,13 @@ function CaseReview() {
   const [approveModalVisible, setApproveModalVisible] = useState(false);
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [materialRejectModalVisible, setMaterialRejectModalVisible] = useState(false);
+  const [currentMaterial, setCurrentMaterial] = useState<CaseMaterial | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [approveForm] = Form.useForm();
   const [rejectForm] = Form.useForm();
   const [transferForm] = Form.useForm();
+  const [materialRejectForm] = Form.useForm();
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
@@ -48,18 +51,22 @@ function CaseReview() {
   const loadCases = async () => {
     setLoading(true);
     try {
-      const params: any = {
-        status: 'reviewing',
+      const baseParams: any = {
         page,
         pageSize,
       };
-      if (keyword) params.keyword = keyword;
-      if (serviceItemId) params.service_item_id = serviceItemId;
+      if (keyword) baseParams.keyword = keyword;
+      if (serviceItemId) baseParams.service_item_id = serviceItemId;
 
-      const res: any = await api.get('/cases', { params });
-      setCases(res.cases || []);
-      setTotal(res.total || 0);
-      setPendingCount(res.total || 0);
+      const [reviewingRes, materialRes]: any[] = await Promise.all([
+        api.get('/cases', { params: { ...baseParams, status: 'reviewing' } }),
+        api.get('/cases', { params: { ...baseParams, status: 'material_reviewing' } }),
+      ]);
+      const mergedCases = [...(materialRes.cases || []), ...(reviewingRes.cases || [])];
+      setCases(mergedCases);
+      const mergedTotal = (materialRes.total || 0) + (reviewingRes.total || 0);
+      setTotal(mergedTotal);
+      setPendingCount(mergedTotal);
     } catch (error) {
       console.error(error);
     } finally {
@@ -149,6 +156,58 @@ function CaseReview() {
       await api.post(`/cases/${currentCase?.id}/transfer`, values);
       message.success('流转成功');
       setTransferModalVisible(false);
+      loadCases();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const reloadCurrentCaseDetail = async () => {
+    if (!currentCase) return;
+    const res: any = await api.get(`/cases/${currentCase.id}`);
+    setCurrentCase(res.case);
+    setCaseMaterials(res.materials || []);
+    setCaseFlows(res.flows || []);
+  };
+
+  const handleMaterialApprove = async (material: CaseMaterial) => {
+    try {
+      setSubmitting(true);
+      await api.post(`/cases/${currentCase?.id}/material-review`, {
+        material_id: material.id,
+        status: 'approved',
+        review_comment: '材料审核通过',
+      });
+      message.success('材料审核通过');
+      await reloadCurrentCaseDetail();
+      loadCases();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleOpenMaterialReject = (material: CaseMaterial) => {
+    setCurrentMaterial(material);
+    materialRejectForm.resetFields();
+    setMaterialRejectModalVisible(true);
+  };
+
+  const handleMaterialRejectSubmit = async () => {
+    try {
+      const values = await materialRejectForm.validateFields();
+      setSubmitting(true);
+      await api.post(`/cases/${currentCase?.id}/material-review`, {
+        material_id: currentMaterial?.id,
+        status: 'rejected',
+        review_comment: values.review_comment,
+      });
+      message.success('材料已驳回');
+      setMaterialRejectModalVisible(false);
+      await reloadCurrentCaseDetail();
       loadCases();
     } catch (error) {
       console.error(error);
@@ -358,6 +417,7 @@ function CaseReview() {
                   rowKey="id"
                   columns={[
                     { title: '材料名称', dataIndex: 'name', key: 'name' },
+                    { title: '附件地址', dataIndex: 'file_url', key: 'file_url', render: (v: string) => v || '-' },
                     {
                       title: '状态',
                       dataIndex: 'status',
@@ -373,6 +433,33 @@ function CaseReview() {
                       },
                     },
                     { title: '审核意见', dataIndex: 'review_comment', key: 'review_comment' },
+                    { title: '补正说明', dataIndex: 'correction_comment', key: 'correction_comment', render: (v: string) => v || '-' },
+                    {
+                      title: '操作',
+                      key: 'action',
+                      width: 140,
+                      render: (_: any, material: CaseMaterial) => (
+                        <Space size="small">
+                          <Button
+                            type="link"
+                            size="small"
+                            disabled={material.status !== 'pending' || submitting}
+                            onClick={() => handleMaterialApprove(material)}
+                          >
+                            通过
+                          </Button>
+                          <Button
+                            type="link"
+                            size="small"
+                            danger
+                            disabled={material.status !== 'pending' || submitting}
+                            onClick={() => handleOpenMaterialReject(material)}
+                          >
+                            驳回
+                          </Button>
+                        </Space>
+                      ),
+                    },
                   ]}
                   pagination={false}
                 />
@@ -491,6 +578,35 @@ function CaseReview() {
           </Form.Item>
           <Form.Item name="comment" label="流转说明">
             <TextArea rows={4} placeholder="请输入流转说明（选填）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="材料驳回"
+        open={materialRejectModalVisible}
+        onCancel={() => setMaterialRejectModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setMaterialRejectModalVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" danger loading={submitting} onClick={handleMaterialRejectSubmit}>
+            确认驳回
+          </Button>,
+        ]}
+        width={500}
+        destroyOnClose
+      >
+        <Form form={materialRejectForm} layout="vertical">
+          <Form.Item label="材料名称">
+            <Input value={currentMaterial?.name} disabled />
+          </Form.Item>
+          <Form.Item
+            name="review_comment"
+            label="驳回原因"
+            rules={[{ required: true, message: '请输入驳回原因' }]}
+          >
+            <TextArea rows={4} placeholder="请输入驳回原因" />
           </Form.Item>
         </Form>
       </Modal>

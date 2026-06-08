@@ -18,7 +18,10 @@ function CitizenCaseDetail() {
   const [flows, setFlows] = useState<CaseFlow[]>([]);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [evalModalVisible, setEvalModalVisible] = useState(false);
+  const [correctionModalVisible, setCorrectionModalVisible] = useState(false);
+  const [currentMaterial, setCurrentMaterial] = useState<CaseMaterial | null>(null);
   const [evalForm] = Form.useForm();
+  const [correctionForm] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -104,6 +107,33 @@ function CitizenCaseDetail() {
       setEvalModalVisible(false);
       evalForm.resetFields();
       loadEvaluation();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleOpenCorrection = (material: CaseMaterial) => {
+    setCurrentMaterial(material);
+    correctionForm.resetFields();
+    correctionForm.setFieldsValue({
+      file_url: material.file_url,
+      correction_comment: material.correction_comment,
+    });
+    setCorrectionModalVisible(true);
+  };
+
+  const handleSubmitCorrection = async () => {
+    try {
+      const values = await correctionForm.validateFields();
+      setSubmitting(true);
+
+      await api.post(`/cases/${id}/materials/${currentMaterial?.id}/correction`, values);
+      message.success('补正材料已提交');
+      setCorrectionModalVisible(false);
+      correctionForm.resetFields();
+      loadCaseDetail();
     } catch (error) {
       console.error(error);
     } finally {
@@ -211,6 +241,26 @@ function CitizenCaseDetail() {
                   审核意见：{material.review_comment}
                 </div>
               )}
+              {material.correction_comment && (
+                <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+                  补正说明：{material.correction_comment}
+                </div>
+              )}
+              {material.file_url && (
+                <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+                  附件地址：{material.file_url}
+                </div>
+              )}
+              {caseData?.status === 'material_correction' && material.status === 'rejected' && (
+                <Button
+                  type="primary"
+                  size="small"
+                  style={{ marginTop: 12 }}
+                  onClick={() => handleOpenCorrection(material)}
+                >
+                  提交补正
+                </Button>
+              )}
             </div>
           ))
         ) : (
@@ -302,6 +352,46 @@ function CitizenCaseDetail() {
           </Form.Item>
           <Form.Item name="suggestions" label="意见建议">
             <TextArea rows={3} placeholder="请输入您的意见和建议（选填）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="提交材料补正"
+        open={correctionModalVisible}
+        onCancel={() => setCorrectionModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCorrectionModalVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" loading={submitting} onClick={handleSubmitCorrection}>
+            提交补正
+          </Button>,
+        ]}
+        width={520}
+        destroyOnClose
+      >
+        <Form form={correctionForm} layout="vertical">
+          <Form.Item label="材料名称">
+            <Input value={currentMaterial?.name} disabled />
+          </Form.Item>
+          <Form.Item name="correction_comment" label="补正说明">
+            <TextArea rows={4} placeholder="请输入补正说明" />
+          </Form.Item>
+          <Form.Item name="file_url" label="附件地址">
+            <Input placeholder="请输入补正附件地址" />
+          </Form.Item>
+          <Form.Item
+            shouldUpdate
+            noStyle
+          >
+            {({ getFieldValue }) => {
+              const hasComment = !!getFieldValue('correction_comment');
+              const hasFile = !!getFieldValue('file_url');
+              return !hasComment && !hasFile ? (
+                <div style={{ color: '#ff4d4f', fontSize: 12 }}>补正说明和附件地址至少填写一项</div>
+              ) : null;
+            }}
           </Form.Item>
         </Form>
       </Modal>

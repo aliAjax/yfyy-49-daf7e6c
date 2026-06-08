@@ -168,6 +168,9 @@ export function initDatabase() {
       file_url TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
       review_comment TEXT,
+      correction_comment TEXT,
+      corrected_at DATETIME,
+      correction_count INTEGER DEFAULT 0,
       reviewed_by TEXT,
       reviewed_at DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -233,7 +236,18 @@ export function initDatabase() {
     );
   `);
 
+  ensureColumn('case_materials', 'correction_comment', 'TEXT');
+  ensureColumn('case_materials', 'corrected_at', 'DATETIME');
+  ensureColumn('case_materials', 'correction_count', 'INTEGER DEFAULT 0');
+
   console.log('数据库初始化完成');
+}
+
+function ensureColumn(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
+  if (!columns.some((item) => item.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 export default db;

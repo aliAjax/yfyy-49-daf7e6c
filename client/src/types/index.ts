@@ -152,6 +152,9 @@ export interface CaseMaterial {
   file_url?: string;
   status: string;
   review_comment?: string;
+  correction_comment?: string;
+  corrected_at?: string;
+  correction_count?: number;
   reviewed_by?: string;
   reviewed_at?: string;
   created_at: string;

@@ -57,6 +57,36 @@ function warningStatusSelect(now: string) {
   `;
 }
 
+function parseMaterialItems(input: any): any[] {
+  if (!input) return [];
+  if (Array.isArray(input)) return input;
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function materialName(item: any, index: number) {
+  if (typeof item === 'string') return item;
+  return item?.name || item?.material_name || `材料${index + 1}`;
+}
+
+function refreshCaseMaterialStatus(caseId: string, fallbackStatus: CaseStatus) {
+  const allMaterials = db.prepare('SELECT status FROM case_materials WHERE case_id = ?').all(caseId) as any[];
+  if (allMaterials.length === 0) return fallbackStatus;
+
+  const hasRejected = allMaterials.some((m: any) => m.status === 'rejected');
+  if (hasRejected) return 'material_correction';
+
+  const hasPending = allMaterials.some((m: any) => m.status === 'pending');
+  return hasPending ? 'material_reviewing' : 'accepting';
+}
+
 // 获取我的办件（群众）
 router.get('/my', (req: AuthRequest, res) => {
   const { status, keyword, page = 1, pageSize = 20 } = req.query as any;
@@ -229,22 +259,45 @@ router.post('/', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
     : null;
 
   const tx = db.transaction(() => {
+    const materialItems = parseMaterialItems(materials);
+    const initialStatus: CaseStatus = materialItems.length > 0 ? 'material_reviewing' : 'submitted';
+
     db.prepare(`
       INSERT INTO cases (id, case_number, service_item_id, user_id, ticket_id, window_id, 
         department_id, status, applicant_name, applicant_phone, applicant_id_card, 
         application_data, materials, deadline)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, caseNumber, service_item_id, userId, ticket_id || null, window_id || null,
-          serviceItem.department_id, applicant_name || '现场群众', 
+          serviceItem.department_id, initialStatus, applicant_name || '现场群众',
           applicant_phone || null, applicant_id_card || null,
           application_data ? JSON.stringify(application_data) : null,
           materials ? JSON.stringify(materials) : null, deadline);
 
+    materialItems.forEach((material, index) => {
+      db.prepare(`
+        INSERT INTO case_materials (id, case_id, name, type, file_url, status)
+        VALUES (?, ?, ?, ?, ?, 'pending')
+      `).run(
+        uuidv4(),
+        id,
+        materialName(material, index),
+        typeof material === 'object' ? material.type || null : null,
+        typeof material === 'object' ? material.file_url || null : null
+      );
+    });
+
     db.prepare(`
       INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
         from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, NULL, ?, ?, NULL, 'submit', 'submitted', '提交申请')
-    `).run(uuidv4(), id, serviceItem.department_id, req.user!.id);
+      VALUES (?, ?, NULL, ?, ?, NULL, 'submit', ?, ?)
+    `).run(
+      uuidv4(),
+      id,
+      serviceItem.department_id,
+      req.user!.id,
+      initialStatus,
+      materialItems.length > 0 ? '提交申请，进入材料审核' : '提交申请'
+    );
 
     if (ticket_id) {
       db.prepare("UPDATE tickets SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -280,6 +333,10 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
     return res.status(404).json({ message: '材料不存在' });
   }
 
+  if (!['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ message: '材料审核状态不正确' });
+  }
+
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE case_materials 
@@ -287,27 +344,91 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
       WHERE id = ?
     `).run(status, review_comment || null, req.user!.id, material_id);
 
-    const allMaterials = db.prepare('SELECT status FROM case_materials WHERE case_id = ?').all(id);
-    const allReviewed = allMaterials.every((m: any) => m.status !== 'pending');
-    const hasRejected = allMaterials.some((m: any) => m.status === 'rejected');
+    const caseStatus = refreshCaseMaterialStatus(id, caseItem.status);
+    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(caseStatus, id);
 
-    let caseStatus: CaseStatus = caseItem.status;
-    if (allReviewed) {
-      caseStatus = hasRejected ? 'material_correction' : 'accepting';
-      db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(caseStatus, id);
-
-      db.prepare(`
-        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-        VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
-      `).run(uuidv4(), id, req.user!.id, caseStatus, 
-        hasRejected ? '材料审核不通过，需要补正' : '材料审核通过');
-    }
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+      VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
+    `).run(
+      uuidv4(),
+      id,
+      req.user!.id,
+      caseStatus,
+      status === 'rejected'
+        ? `材料${(material as any).name}审核不通过：${review_comment || '需要补正'}`
+        : `材料${(material as any).name}审核通过`
+    );
   });
 
   tx();
 
   res.json({ message: '材料审核完成' });
+});
+
+// 提交补正材料
+router.post('/:id/materials/:materialId/correction', requireRoles('citizen'), (req: AuthRequest, res) => {
+  const { id, materialId } = req.params;
+  const { correction_comment, file_url } = req.body;
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+  if (caseItem.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权补正此办件材料' });
+  }
+  if (caseItem.status !== 'material_correction') {
+    return res.status(400).json({ message: '当前办件状态不支持材料补正' });
+  }
+
+  const material = db.prepare('SELECT * FROM case_materials WHERE id = ? AND case_id = ?')
+    .get(materialId, id) as any;
+  if (!material) {
+    return res.status(404).json({ message: '材料不存在' });
+  }
+  if (material.status !== 'rejected') {
+    return res.status(400).json({ message: '仅被驳回材料可以提交补正' });
+  }
+  if (!correction_comment && !file_url) {
+    return res.status(400).json({ message: '请填写补正说明或附件地址' });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE case_materials
+      SET status = 'pending',
+        file_url = COALESCE(?, file_url),
+        correction_comment = ?,
+        corrected_at = CURRENT_TIMESTAMP,
+        correction_count = COALESCE(correction_count, 0) + 1,
+        reviewed_by = NULL,
+        reviewed_at = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(file_url || null, correction_comment || null, materialId);
+
+    const caseStatus = refreshCaseMaterialStatus(id, 'material_reviewing');
+    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(caseStatus, id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+      VALUES (?, ?, ?, NULL, 'material_correction_submit', ?, ?)
+    `).run(
+      uuidv4(),
+      id,
+      req.user!.id,
+      caseStatus,
+      `提交${material.name}补正材料${correction_comment ? `：${correction_comment}` : ''}`
+    );
+  });
+
+  tx();
+
+  const updated = db.prepare('SELECT * FROM case_materials WHERE id = ?').get(materialId);
+  res.json({ message: '补正材料已提交', material: updated });
 });
 
 // 受理办件
@@ -320,7 +441,7 @@ router.post('/:id/accept', requireRoles('window', 'admin'), (req: AuthRequest, r
     return res.status(404).json({ message: '办件不存在' });
   }
 
-  if (!['submitted', 'material_correction', 'accepting'].includes(caseItem.status)) {
+  if (!['submitted', 'accepting'].includes(caseItem.status)) {
     return res.status(400).json({ message: '当前状态不支持受理' });
   }
 
@@ -482,16 +603,34 @@ router.post('/:id/materials', (req: AuthRequest, res) => {
   const { id } = req.params;
   const { name, type, file_url } = req.body;
   
-  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id);
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
   if (!caseItem) {
     return res.status(404).json({ message: '办件不存在' });
   }
+  if (req.user!.role === 'citizen' && caseItem.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权添加此办件材料' });
+  }
+  if (['completed', 'rejected'].includes(caseItem.status)) {
+    return res.status(400).json({ message: '已结束办件不能添加材料' });
+  }
 
   const materialId = uuidv4();
-  db.prepare(`
-    INSERT INTO case_materials (id, case_id, name, type, file_url, status)
-    VALUES (?, ?, ?, ?, ?, 'pending')
-  `).run(materialId, id, name, type || null, file_url || null);
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO case_materials (id, case_id, name, type, file_url, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(materialId, id, name, type || null, file_url || null);
+
+    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(refreshCaseMaterialStatus(id, 'material_reviewing'), id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+      VALUES (?, ?, ?, NULL, 'material_create', 'material_reviewing', ?)
+    `).run(uuidv4(), id, req.user!.id, `新增材料${name}，进入材料审核`);
+  });
+
+  tx();
 
   const material = db.prepare('SELECT * FROM case_materials WHERE id = ?').get(materialId);
   res.status(201).json({ material });
