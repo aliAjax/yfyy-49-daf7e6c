@@ -9,15 +9,16 @@ export function parseMaterialList(
     return materialList;
   }
 
-  if (legacyMaterials) {
+  const legacyText = legacyMaterials?.trim();
+  if (legacyText) {
     try {
-      const parsed = JSON.parse(legacyMaterials);
+      const parsed = JSON.parse(legacyText);
       if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed.map((m: any, index: number) => ({
           id: `legacy-${index}`,
           service_item_id: serviceItemId || '',
-          name: m.name || '',
-          is_required: m.required ? 1 : 0,
+          name: typeof m === 'string' ? m : m.name || '',
+          is_required: typeof m === 'string' ? 1 : m.required ? 1 : 0,
           description: m.description || '',
           example: '',
           sort_order: index,
@@ -26,7 +27,17 @@ export function parseMaterialList(
         }));
       }
     } catch {
-      // 解析失败，返回空数组
+      return [{
+        id: 'legacy-text',
+        service_item_id: serviceItemId || '',
+        name: legacyText,
+        is_required: 1,
+        description: '',
+        example: '',
+        sort_order: 0,
+        created_at: '',
+        updated_at: '',
+      }];
     }
   }
 
@@ -40,12 +51,13 @@ export function hasMaterials(
   if (materialList && materialList.length > 0) {
     return true;
   }
-  if (legacyMaterials) {
+  const legacyText = legacyMaterials?.trim();
+  if (legacyText) {
     try {
-      const parsed = JSON.parse(legacyMaterials);
-      return Array.isArray(parsed) && parsed.length > 0;
+      const parsed = JSON.parse(legacyText);
+      return Array.isArray(parsed) ? parsed.length > 0 : true;
     } catch {
-      return false;
+      return true;
     }
   }
   return false;
