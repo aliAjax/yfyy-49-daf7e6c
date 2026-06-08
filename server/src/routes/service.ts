@@ -1,0 +1,237 @@
+import { Router } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import db from '../database';
+import { authMiddleware, requireRoles, AuthRequest } from '../middleware/auth';
+import dayjs from 'dayjs';
+
+const router = Router();
+
+router.use(authMiddleware);
+
+// 服务事项列表
+router.get('/service-items', (req: AuthRequest, res) => {
+  const { department_id, status, keyword, page = 1, pageSize = 20 } = req.query as any;
+  
+  let sql = `
+    SELECT si.*, d.name as department_name, w.name as window_name 
+    FROM service_items si 
+    LEFT JOIN departments d ON si.department_id = d.id 
+    LEFT JOIN windows w ON si.window_id = w.id 
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+
+  if (department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(department_id);
+  }
+  if (status) {
+    sql += ' AND si.status = ?';
+    params.push(status);
+  }
+  if (keyword) {
+    sql += ' AND (si.name LIKE ? OR si.code LIKE ?)';
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+
+  const total = db.prepare(sql.replace('SELECT si.*, d.name as department_name, w.name as window_name', 'SELECT COUNT(*) as count'))
+    .get(...params) as any;
+  
+  sql += ' ORDER BY si.sort_order ASC, si.created_at DESC LIMIT ? OFFSET ?';
+  params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
+
+  const items = db.prepare(sql).all(...params);
+
+  res.json({ items, total: total.count, page: Number(page), pageSize: Number(pageSize) });
+});
+
+// 所有启用的服务事项（群众端使用）
+router.get('/service-items/all', (req: AuthRequest, res) => {
+  const items = db.prepare(`
+    SELECT si.*, d.name as department_name, w.name as window_name
+    FROM service_items si
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN windows w ON si.window_id = w.id
+    WHERE si.status = 'active'
+    ORDER BY si.sort_order ASC, si.created_at DESC
+  `).all();
+
+  res.json({ items });
+});
+
+// 服务事项详情
+router.get('/service-items/:id', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  
+  const item = db.prepare(`
+    SELECT si.*, d.name as department_name, w.name as window_name
+    FROM service_items si
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN windows w ON si.window_id = w.id
+    WHERE si.id = ?
+  `).get(id);
+
+  if (!item) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
+  res.json({ item });
+});
+
+// 创建服务事项
+router.post('/service-items', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { name, code, department_id, window_id, description, materials, processing_time, fee, sort_order = 0 } = req.body;
+  
+  if (!name || !code) {
+    return res.status(400).json({ message: '请填写事项名称和编码' });
+  }
+
+  const existing = db.prepare('SELECT id FROM service_items WHERE code = ?').get(code);
+  if (existing) {
+    return res.status(400).json({ message: '事项编码已存在' });
+  }
+
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO service_items (id, name, code, department_id, window_id, description, materials, processing_time, fee, status, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+  `).run(id, name, code, department_id || null, window_id || null, description || null, materials || null, 
+       processing_time || null, fee || null, sort_order);
+
+  const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+  res.status(201).json({ item });
+});
+
+// 更新服务事项
+router.put('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { name, code, department_id, window_id, description, materials, processing_time, fee, status, sort_order } = req.body;
+
+  const existing = db.prepare('SELECT id FROM service_items WHERE code = ? AND id != ?').get(code, id);
+  if (existing) {
+    return res.status(400).json({ message: '事项编码已存在' });
+  }
+
+  db.prepare(`
+    UPDATE service_items SET name = ?, code = ?, department_id = ?, window_id = ?, description = ?, 
+      materials = ?, processing_time = ?, fee = ?, status = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(name, code, department_id || null, window_id || null, description || null, materials || null,
+       processing_time || null, fee || null, status || 'active', sort_order || 0, id);
+
+  const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+  res.json({ item });
+});
+
+// 删除服务事项
+router.delete('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  db.prepare('DELETE FROM service_items WHERE id = ?').run(id);
+  db.prepare('DELETE FROM number_sources WHERE service_item_id = ?').run(id);
+  res.json({ message: '删除成功' });
+});
+
+// 号源管理 - 获取某天的号源
+router.get('/number-sources', (req: AuthRequest, res) => {
+  const { service_item_id, date, start_date, end_date } = req.query as any;
+  
+  let sql = 'SELECT * FROM number_sources WHERE 1=1';
+  const params: any[] = [];
+
+  if (service_item_id) {
+    sql += ' AND service_item_id = ?';
+    params.push(service_item_id);
+  }
+  if (date) {
+    sql += ' AND date = ?';
+    params.push(date);
+  }
+  if (start_date && end_date) {
+    sql += ' AND date >= ? AND date <= ?';
+    params.push(start_date, end_date);
+  }
+
+  sql += ' ORDER BY date';
+  const sources = db.prepare(sql).all(...params);
+
+  res.json({ sources });
+});
+
+// 生成号源
+router.post('/number-sources/generate', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { service_item_id, start_date, end_date, total_count, time_slots } = req.body;
+  
+  if (!service_item_id || !start_date || !end_date || !total_count) {
+    return res.status(400).json({ message: '请填写完整信息' });
+  }
+
+  const start = dayjs(start_date);
+  const end = dayjs(end_date);
+  
+  if (start.isAfter(end)) {
+    return res.status(400).json({ message: '开始日期不能晚于结束日期' });
+  }
+
+  const days = end.diff(start, 'day') + 1;
+  let generated = 0;
+
+  for (let i = 0; i < days; i++) {
+    const date = start.add(i, 'day').format('YYYY-MM-DD');
+    
+    const existing = db.prepare('SELECT id FROM number_sources WHERE service_item_id = ? AND date = ?')
+      .get(service_item_id, date);
+    
+    if (!existing) {
+      const id = uuidv4();
+      db.prepare(`
+        INSERT INTO number_sources (id, service_item_id, date, total_count, booked_count, time_slots)
+        VALUES (?, ?, ?, ?, 0, ?)
+      `).run(id, service_item_id, date, total_count, time_slots || null);
+      generated++;
+    }
+  }
+
+  res.json({ message: `成功生成 ${generated} 天的号源`, generated });
+});
+
+// 更新号源
+router.put('/number-sources/:id', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { total_count, time_slots } = req.body;
+
+  const source = db.prepare('SELECT * FROM number_sources WHERE id = ?').get(id) as any;
+  if (!source) {
+    return res.status(404).json({ message: '号源不存在' });
+  }
+
+  if (total_count < source.booked_count) {
+    return res.status(400).json({ message: '总号源数不能小于已预约数' });
+  }
+
+  db.prepare(`
+    UPDATE number_sources SET total_count = ?, time_slots = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(total_count, time_slots || null, id);
+
+  const updated = db.prepare('SELECT * FROM number_sources WHERE id = ?').get(id);
+  res.json({ source: updated });
+});
+
+// 获取可用号源日期
+router.get('/available-dates', (req: AuthRequest, res) => {
+  const { service_item_id } = req.query as any;
+  
+  const today = dayjs().format('YYYY-MM-DD');
+  
+  const sources = db.prepare(`
+    SELECT date, total_count, booked_count 
+    FROM number_sources 
+    WHERE service_item_id = ? AND date >= ? AND booked_count < total_count
+    ORDER BY date
+    LIMIT 30
+  `).all(service_item_id, today);
+
+  res.json({ dates: sources });
+});
+
+export default router;
