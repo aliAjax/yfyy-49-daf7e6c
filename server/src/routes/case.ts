@@ -158,8 +158,8 @@ router.get('/:id', (req: AuthRequest, res) => {
   `).all(id);
 
   const requiredMaterialList = db.prepare(`
-    SELECT * FROM service_item_materials 
-    WHERE service_item_id = ? 
+    SELECT * FROM service_item_materials
+    WHERE service_item_id = ?
     ORDER BY sort_order ASC, created_at ASC
   `).all(caseItem.service_item_id);
 
@@ -222,7 +222,28 @@ router.post('/', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
 
   tx();
 
-  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id);
+  const caseItem = db.prepare(`
+    SELECT c.*, si.name as service_item_name, si.code as service_item_code,
+      si.description as service_item_description, si.materials as required_materials,
+      d.name as department_name, w.name as window_name, w.number as window_number,
+      u.name as user_name, u.phone as user_phone,
+      handler.name as handler_name
+    FROM cases c
+    LEFT JOIN service_items si ON c.service_item_id = si.id
+    LEFT JOIN departments d ON c.department_id = d.id
+    LEFT JOIN windows w ON c.window_id = w.id
+    LEFT JOIN users u ON c.user_id = u.id
+    LEFT JOIN users handler ON c.current_handler_id = handler.id
+    WHERE c.id = ?
+  `).get(id);
+
+  const requiredMaterialList = db.prepare(`
+    SELECT * FROM service_item_materials
+    WHERE service_item_id = ?
+    ORDER BY sort_order ASC, created_at ASC
+  `).all(caseItem.service_item_id);
+
+  caseItem.material_list = requiredMaterialList.length > 0 ? requiredMaterialList : null;
 
   db.prepare(`
     INSERT INTO operation_logs (user_id, user_name, action, module, detail)

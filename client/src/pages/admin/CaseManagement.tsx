@@ -1,10 +1,10 @@
-import { Card, Table, Button, Select, Input, Modal, Tag, message, Space, Descriptions, Row, Col, Statistic, List } from 'antd';
-import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, PrinterOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Select, Input, Modal, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Form } from 'antd';
+import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, PrinterOutlined, PlusOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../api';
-import type { Case, Department, ServiceItem, CaseMaterial, CaseFlow, ServiceItemMaterial } from '../../types';
+import type { Case, Department, ServiceItem, CaseMaterial, CaseFlow, ServiceItemMaterial, Window } from '../../types';
 import { CaseStatusText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import CaseReceipt from '../../components/CaseReceipt';
@@ -18,16 +18,22 @@ function CaseManagement() {
   const [pageSize, setPageSize] = useState(10);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
+  const [windows, setWindows] = useState<Window[]>([]);
   const [status, setStatus] = useState<string>('');
   const [departmentId, setDepartmentId] = useState<string>('');
   const [serviceItemId, setServiceItemId] = useState<string>('');
   const [keyword, setKeyword] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
   const [receiptVisible, setReceiptVisible] = useState(false);
+  const [createVisible, setCreateVisible] = useState(false);
+  const [createSuccessVisible, setCreateSuccessVisible] = useState(false);
   const [currentCase, setCurrentCase] = useState<Case | null>(null);
+  const [newCase, setNewCase] = useState<Case | null>(null);
   const [caseMaterials, setCaseMaterials] = useState<CaseMaterial[]>([]);
   const [caseFlows, setCaseFlows] = useState<CaseFlow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createForm] = Form.useForm();
   const [stats, setStats] = useState({
     total: 0,
     processing: 0,
@@ -38,6 +44,7 @@ function CaseManagement() {
   useEffect(() => {
     loadDepartments();
     loadServiceItems();
+    loadWindows();
     loadCases();
   }, [page, pageSize]);
 
@@ -54,6 +61,15 @@ function CaseManagement() {
     try {
       const res: any = await api.get('/service/service-items/all');
       setServiceItems(res.items || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const loadWindows = async () => {
+    try {
+      const res: any = await api.get('/system/windows');
+      setWindows(res.windows || []);
     } catch (error) {
       console.error(error);
     }
@@ -116,6 +132,31 @@ function CaseManagement() {
   const handleViewReceipt = (caseItem: Case) => {
     setCurrentCase(caseItem);
     setReceiptVisible(true);
+  };
+
+  const handleOpenCreate = () => {
+    createForm.resetFields();
+    setCreateVisible(true);
+  };
+
+  const handleCreateCase = async () => {
+    try {
+      const values = await createForm.validateFields();
+      setCreateLoading(true);
+      const res: any = await api.post('/cases', values);
+      if (res.case) {
+        setNewCase(res.case);
+        setCreateVisible(false);
+        setCreateSuccessVisible(true);
+        message.success('办件创建成功');
+        loadCases();
+      }
+    } catch (error: any) {
+      console.error(error);
+      message.error(error?.response?.data?.message || '创建失败');
+    } finally {
+      setCreateLoading(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -311,7 +352,14 @@ function CaseManagement() {
         </Space>
       </Card>
 
-      <Card title="办件列表">
+      <Card
+        title="办件列表"
+        extra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate}>
+            新建办件
+          </Button>
+        }
+      >
         <Table
           columns={columns}
           dataSource={cases}
@@ -485,6 +533,144 @@ function CaseManagement() {
             onClose={() => setReceiptVisible(false)}
           />
         )}
+      </Modal>
+
+      <Modal
+        title="新建办件"
+        open={createVisible}
+        onCancel={() => setCreateVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCreateVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" loading={createLoading} onClick={handleCreateCase}>
+            创建
+          </Button>,
+        ]}
+        width={600}
+        destroyOnClose
+      >
+        <Form form={createForm} layout="vertical">
+          <Form.Item
+            name="service_item_id"
+            label="服务事项"
+            rules={[{ required: true, message: '请选择服务事项' }]}
+          >
+            <Select
+              placeholder="请选择服务事项"
+              showSearch
+              optionFilterProp="children"
+              options={serviceItems.map((item) => ({
+                label: item.name,
+                value: item.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="applicant_name"
+            label="申请人姓名"
+            rules={[{ required: true, message: '请输入申请人姓名' }]}
+          >
+            <Input placeholder="请输入申请人姓名" />
+          </Form.Item>
+          <Form.Item
+            name="applicant_phone"
+            label="联系电话"
+            rules={[
+              { required: true, message: '请输入联系电话' },
+              { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码' },
+            ]}
+          >
+            <Input placeholder="请输入联系电话" />
+          </Form.Item>
+          <Form.Item name="applicant_id_card" label="身份证号">
+            <Input placeholder="请输入身份证号（可选）" />
+          </Form.Item>
+          <Form.Item name="window_id" label="受理窗口">
+            <Select
+              placeholder="请选择受理窗口"
+              allowClear
+              options={windows.map((w) => ({
+                label: `${w.number} - ${w.name}`,
+                value: w.id,
+              }))}
+            />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={3} placeholder="请输入备注信息（可选）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="办件创建成功"
+        open={createSuccessVisible}
+        onCancel={() => setCreateSuccessVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setCreateSuccessVisible(false)}>
+            关闭
+          </Button>,
+          <Button
+            key="detail"
+            onClick={() => {
+              if (newCase) {
+                setCreateSuccessVisible(false);
+                handleViewDetail(newCase);
+              }
+            }}
+          >
+            查看详情
+          </Button>,
+          <Button
+            key="receipt"
+            type="primary"
+            icon={<PrinterOutlined />}
+            onClick={() => {
+              if (newCase) {
+                setCreateSuccessVisible(false);
+                handleViewReceipt(newCase);
+              }
+            }}
+          >
+            打印回执
+          </Button>,
+        ]}
+        width={500}
+        destroyOnClose
+      >
+        <div style={{ textAlign: 'center', padding: '20px 0' }}>
+          <div
+            style={{
+              fontSize: 48,
+              color: '#52c41a',
+              marginBottom: 16,
+            }}
+          >
+            ✓
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 16 }}>
+            办件创建成功
+          </div>
+          {newCase && (
+            <div style={{ background: '#f6ffed', padding: '16px 24px', borderRadius: 8, textAlign: 'left' }}>
+              <p style={{ margin: '8px 0' }}>
+                <span style={{ color: '#666' }}>办件编号：</span>
+                <span style={{ fontFamily: 'monospace', fontWeight: 'bold' }}>{newCase.case_number}</span>
+              </p>
+              <p style={{ margin: '8px 0' }}>
+                <span style={{ color: '#666' }}>申请人：</span>
+                <span>{newCase.applicant_name}</span>
+              </p>
+              <p style={{ margin: '8px 0' }}>
+                <span style={{ color: '#666' }}>服务事项：</span>
+                <span>{newCase.service_item_name}</span>
+              </p>
+            </div>
+          )}
+          <p style={{ color: '#999', marginTop: 16, fontSize: 13 }}>
+            点击"打印回执"可查看并打印办件受理回执
+          </p>
+        </div>
       </Modal>
     </div>
   );

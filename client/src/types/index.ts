@@ -227,6 +227,55 @@ export interface NumberSource {
   updated_at: string;
 }
 
+export interface CalendarDayItem {
+  service_item_id: string;
+  service_item_name: string;
+  service_item_code: string;
+  department_id?: string;
+  department_name?: string;
+  total_count: number;
+  booked_count: number;
+  remaining_count: number;
+}
+
+export interface CalendarDay {
+  date: string;
+  total_count: number;
+  booked_count: number;
+  remaining_count: number;
+  items: CalendarDayItem[];
+}
+
+export interface CalendarOverview {
+  calendar: CalendarDay[];
+  stats: {
+    total_count: number;
+    booked_count: number;
+    remaining_count: number;
+    service_item_count: number;
+    date_range: {
+      start: string;
+      end: string;
+    };
+  };
+}
+
+export interface DayAppointment extends Appointment {
+  service_item_name?: string;
+  service_item_code?: string;
+  department_id?: string;
+  department_name?: string;
+  user_name?: string;
+}
+
+export interface DayAppointmentsResponse {
+  appointments: DayAppointment[];
+  total: number;
+  page: number;
+  pageSize: number;
+  date: string;
+}
+
 export const CaseStatusText: Record<CaseStatus, string> = {
   draft: '草稿',
   submitted: '已提交',

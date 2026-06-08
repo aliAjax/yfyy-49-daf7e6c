@@ -186,6 +186,183 @@ router.post('/', (req: AuthRequest, res) => {
   res.status(201).json({ appointment });
 });
 
+// 预约日历看板 - 获取未来N天的号源和预约数据
+router.get('/calendar/overview', (req: AuthRequest, res) => {
+  const { department_id, service_item_id, days = 30 } = req.query as any;
+
+  const dayCount = Math.min(Math.max(Number(days), 1), 90);
+  const today = dayjs().format('YYYY-MM-DD');
+  const endDate = dayjs().add(dayCount - 1, 'day').format('YYYY-MM-DD');
+
+  let sql = `
+    SELECT
+      ns.id,
+      ns.service_item_id,
+      si.name as service_item_name,
+      si.code as service_item_code,
+      d.id as department_id,
+      d.name as department_name,
+      ns.date,
+      ns.total_count,
+      ns.booked_count
+    FROM number_sources ns
+    LEFT JOIN service_items si ON ns.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
+    WHERE ns.date >= ? AND ns.date <= ?
+  `;
+  const params: any[] = [today, endDate];
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(req.user!.department_id);
+  } else if (req.user!.role === 'window' && req.user!.department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(req.user!.department_id);
+  }
+
+  if (department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(department_id);
+  }
+  if (service_item_id) {
+    sql += ' AND ns.service_item_id = ?';
+    params.push(service_item_id);
+  }
+
+  sql += ' ORDER BY ns.date ASC, si.department_id ASC, si.sort_order ASC';
+
+  const sources = db.prepare(sql).all(...params);
+
+  const dateMap: Record<string, any[]> = {};
+  const serviceItemSet = new Set<string>();
+
+  sources.forEach((item: any) => {
+    const date = item.date;
+    if (!dateMap[date]) {
+      dateMap[date] = [];
+    }
+    dateMap[date].push(item);
+    serviceItemSet.add(item.service_item_id);
+  });
+
+  const calendar: any[] = [];
+  for (let i = 0; i < dayCount; i++) {
+    const date = dayjs().add(i, 'day').format('YYYY-MM-DD');
+    const daySources = dateMap[date] || [];
+
+    const dayTotal = daySources.reduce((sum, s) => sum + s.total_count, 0);
+    const dayBooked = daySources.reduce((sum, s) => sum + s.booked_count, 0);
+
+    calendar.push({
+      date,
+      total_count: dayTotal,
+      booked_count: dayBooked,
+      remaining_count: dayTotal - dayBooked,
+      items: daySources.map(s => ({
+        service_item_id: s.service_item_id,
+        service_item_name: s.service_item_name,
+        service_item_code: s.service_item_code,
+        department_id: s.department_id,
+        department_name: s.department_name,
+        total_count: s.total_count,
+        booked_count: s.booked_count,
+        remaining_count: s.total_count - s.booked_count,
+      })),
+    });
+  }
+
+  const totalStats = sources.reduce(
+    (acc: any, item: any) => {
+      acc.total_count += item.total_count;
+      acc.booked_count += item.booked_count;
+      return acc;
+    },
+    { total_count: 0, booked_count: 0 }
+  );
+
+  res.json({
+    calendar,
+    stats: {
+      total_count: totalStats.total_count,
+      booked_count: totalStats.booked_count,
+      remaining_count: totalStats.total_count - totalStats.booked_count,
+      service_item_count: serviceItemSet.size,
+      date_range: { start: today, end: endDate },
+    },
+  });
+});
+
+// 获取某天的预约名单
+router.get('/calendar/day-appointments', (req: AuthRequest, res) => {
+  const { date, department_id, service_item_id, status, page = 1, pageSize = 50 } = req.query as any;
+
+  if (!date) {
+    return res.status(400).json({ message: '请指定日期' });
+  }
+
+  let sql = `
+    SELECT
+      a.id,
+      a.appointment_date,
+      a.time_slot,
+      a.status,
+      a.applicant_name,
+      a.applicant_phone,
+      a.applicant_id_card,
+      a.remark,
+      a.created_at,
+      a.service_item_id,
+      si.name as service_item_name,
+      si.code as service_item_code,
+      d.id as department_id,
+      d.name as department_name,
+      u.name as user_name
+    FROM appointments a
+    LEFT JOIN service_items si ON a.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.appointment_date = ?
+  `;
+  const params: any[] = [date];
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(req.user!.department_id);
+  } else if (req.user!.role === 'window' && req.user!.department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(req.user!.department_id);
+  }
+
+  if (department_id) {
+    sql += ' AND si.department_id = ?';
+    params.push(department_id);
+  }
+  if (service_item_id) {
+    sql += ' AND a.service_item_id = ?';
+    params.push(service_item_id);
+  }
+  if (status) {
+    sql += ' AND a.status = ?';
+    params.push(status);
+  }
+
+  const countSql = sql.replace(/SELECT[\s\S]*?FROM/, 'SELECT COUNT(*) as count FROM');
+  const total = db.prepare(countSql).get(...params) as any;
+
+  sql += ' ORDER BY si.sort_order ASC, a.time_slot ASC, a.created_at ASC LIMIT ? OFFSET ?';
+  params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
+
+  const appointments = db.prepare(sql).all(...params);
+
+  res.json({
+    appointments,
+    total: total.count,
+    page: Number(page),
+    pageSize: Number(pageSize),
+    date,
+  });
+});
+
 // 取消预约
 router.post('/:id/cancel', (req: AuthRequest, res) => {
   const { id } = req.params;
