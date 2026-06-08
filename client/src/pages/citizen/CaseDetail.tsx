@@ -1,10 +1,10 @@
-import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space, Alert } from 'antd';
-import { ArrowLeftOutlined, StarOutlined, PrinterOutlined, EditOutlined, ExclamationCircleOutlined, FileDoneOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space } from 'antd';
+import { ArrowLeftOutlined, StarOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import type { Case, CaseMaterial, CaseFlow, Evaluation, ServiceItemMaterial } from '../../types';
-import { CaseStatusText, CaseFlowActionText, CaseMaterialStatusText, CaseMaterialStatusColor } from '../../types';
+import { CaseStatusText, CaseFlowActionText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
 import CaseReceipt from '../../components/CaseReceipt';
@@ -23,10 +23,6 @@ function CitizenCaseDetail() {
   const [receiptVisible, setReceiptVisible] = useState(false);
   const [evalForm] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
-  const [correctionModalVisible, setCorrectionModalVisible] = useState(false);
-  const [currentCorrectionMaterial, setCurrentCorrectionMaterial] = useState<CaseMaterial | null>(null);
-  const [correctionForm] = Form.useForm();
-  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -75,53 +71,21 @@ function CitizenCaseDetail() {
   };
 
   const getMaterialStatusColor = (status: string) => {
-    return CaseMaterialStatusColor[status] || 'default';
+    const colorMap: Record<string, string> = {
+      pending: 'orange',
+      approved: 'green',
+      rejected: 'red',
+    };
+    return colorMap[status] || 'default';
   };
 
   const getMaterialStatusText = (status: string) => {
-    return CaseMaterialStatusText[status] || status;
-  };
-
-  const canCorrect = (material: CaseMaterial) => {
-    return ['rejected', 'correction_rejected', 'correction_pending'].includes(material.status) && 
-           caseData?.status === 'material_correction';
-  };
-
-  const handleOpenCorrection = (material: CaseMaterial) => {
-    setCurrentCorrectionMaterial(material);
-    correctionForm.resetFields();
-    correctionForm.setFieldsValue({
-      correction_comment: material.correction_comment || '',
-      correction_file_url: material.correction_file_url || '',
-    });
-    setCorrectionModalVisible(true);
-  };
-
-  const handleSubmitCorrection = async () => {
-    if (!currentCorrectionMaterial) return;
-    
-    try {
-      const values = await correctionForm.validateFields();
-      setCorrectionSubmitting(true);
-
-      const res: any = await api.post(`/cases/${id}/materials/${currentCorrectionMaterial.id}/correct`, {
-        correction_comment: values.correction_comment,
-        correction_file_url: values.correction_file_url,
-      });
-
-      message.success('补正提交成功');
-      setCorrectionModalVisible(false);
-      
-      if (res.material) {
-        setMaterials(prev => prev.map(m => m.id === res.material.id ? res.material : m));
-      }
-      
-      loadCaseDetail();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setCorrectionSubmitting(false);
-    }
+    const textMap: Record<string, string> = {
+      pending: '待审核',
+      approved: '已通过',
+      rejected: '已驳回',
+    };
+    return textMap[status] || status;
   };
 
   const handleSubmitEvaluation = async () => {
@@ -157,9 +121,6 @@ function CitizenCaseDetail() {
     if (action === 'receive') return 'cyan';
     if (action === 'return') return 'orange';
     if (action === 'collaborate_complete') return 'green';
-    if (action === 'material_correction_submit') return 'orange';
-    if (action === 'material_review' && status === 'material_correction') return 'red';
-    if (action === 'material_review' && status === 'accepting') return 'green';
     return 'blue';
   };
 
@@ -296,93 +257,27 @@ function CitizenCaseDetail() {
         </Card>
       )}
 
-      {caseData?.status === 'material_correction' && (
-        <Alert
-          message="材料需补正"
-          description="您提交的部分材料需要补正，请查看下方材料详情，按要求补正后重新提交。"
-          type="warning"
-          showIcon
-          icon={<ExclamationCircleOutlined />}
-          style={{ marginBottom: 16 }}
-        />
-      )}
-
-      <Card 
-        title={
-          <span>
-            已提交材料
-            {caseData?.status === 'material_correction' && (
-              <Tag color="orange" style={{ marginLeft: 8 }}>待补正</Tag>
-            )}
-          </span>
-        } 
-        style={{ marginBottom: 16 }}
-      >
+      <Card title="已提交材料" style={{ marginBottom: 16 }}>
         {materials.length > 0 ? (
           materials.map((material, index) => (
             <div
               key={material.id}
               style={{
                 padding: '12px 16px',
-                border: canCorrect(material) ? '1px solid #faad14' : '1px solid #f0f0f0',
+                border: '1px solid #f0f0f0',
                 borderRadius: 4,
                 marginBottom: index < materials.length - 1 ? 8 : 0,
-                background: canCorrect(material) ? '#fffbe6' : 'transparent',
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 500 }}>{material.name}</span>
-                  {material.correction_count && material.correction_count > 0 && (
-                    <Tag color="blue" style={{ fontSize: 11 }}>
-                      第{material.correction_count}次补正
-                    </Tag>
-                  )}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Tag color={getMaterialStatusColor(material.status)}>
-                    {getMaterialStatusText(material.status)}
-                  </Tag>
-                  {canCorrect(material) && (
-                    <Button 
-                      type="primary" 
-                      size="small" 
-                      icon={<EditOutlined />}
-                      onClick={() => handleOpenCorrection(material)}
-                    >
-                      补正
-                    </Button>
-                  )}
-                </div>
+                <span style={{ fontWeight: 500 }}>{material.name}</span>
+                <Tag color={getMaterialStatusColor(material.status)}>
+                  {getMaterialStatusText(material.status)}
+                </Tag>
               </div>
-              
-              {material.file_url && (
-                <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                  原件地址：{material.file_url}
-                </div>
-              )}
-              
               {material.review_comment && (
-                <div style={{ fontSize: 12, color: '#ff4d4f', marginTop: 8, fontWeight: 500 }}>
-                  驳回原因：{material.review_comment}
-                </div>
-              )}
-              
-              {material.correction_comment && (
-                <div style={{ fontSize: 12, color: '#1890ff', marginTop: 8 }}>
-                  补正说明：{material.correction_comment}
-                </div>
-              )}
-              
-              {material.correction_file_url && (
-                <div style={{ fontSize: 12, color: '#1890ff', marginTop: 4 }}>
-                  补正附件：{material.correction_file_url}
-                </div>
-              )}
-              
-              {material.last_corrected_at && (
-                <div style={{ fontSize: 11, color: '#999', marginTop: 6 }}>
-                  上次补正时间：{dayjs(material.last_corrected_at).format('YYYY-MM-DD HH:mm')}
+                <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
+                  审核意见：{material.review_comment}
                 </div>
               )}
             </div>
@@ -439,83 +334,6 @@ function CitizenCaseDetail() {
           )}
         </Card>
       )}
-
-      <Modal
-        title={
-          <span>
-            <EditOutlined style={{ color: '#faad14', marginRight: 8 }} />
-            材料补正 - {currentCorrectionMaterial?.name}
-          </span>
-        }
-        open={correctionModalVisible}
-        onCancel={() => setCorrectionModalVisible(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setCorrectionModalVisible(false)}>
-            取消
-          </Button>,
-          <Button 
-            key="submit" 
-            type="primary" 
-            loading={correctionSubmitting} 
-            onClick={handleSubmitCorrection}
-          >
-            提交补正
-          </Button>,
-        ]}
-        width={600}
-        destroyOnClose
-      >
-        {currentCorrectionMaterial && (
-          <div>
-            {currentCorrectionMaterial.review_comment && (
-              <Alert
-                message="驳回原因"
-                description={currentCorrectionMaterial.review_comment}
-                type="error"
-                showIcon
-                style={{ marginBottom: 16 }}
-              />
-            )}
-            
-            <Form form={correctionForm} layout="vertical">
-              <Form.Item
-                name="correction_comment"
-                label="补正说明"
-                rules={[
-                  { 
-                    validator: (_, value) => {
-                      const fileUrl = correctionForm.getFieldValue('correction_file_url');
-                      if (!value && !fileUrl) {
-                        return Promise.reject('请填写补正说明或提供补正附件地址');
-                      }
-                      return Promise.resolve();
-                    }
-                  }
-                ]}
-              >
-                <TextArea 
-                  rows={4} 
-                  placeholder="请详细说明材料的补正情况..." 
-                />
-              </Form.Item>
-              
-              <Form.Item
-                name="correction_file_url"
-                label="补正附件地址"
-                extra="请输入补正材料的文件链接或访问地址"
-              >
-                <Input placeholder="https://example.com/corrected-file.pdf" />
-              </Form.Item>
-            </Form>
-            
-            {currentCorrectionMaterial.correction_count && currentCorrectionMaterial.correction_count > 0 && (
-              <div style={{ fontSize: 12, color: '#999', marginTop: 8 }}>
-                这是第 {currentCorrectionMaterial.correction_count + 1} 次补正
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
 
       <Modal
         title="办件评价"

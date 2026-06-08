@@ -172,32 +172,16 @@ export interface Case {
   collaboration_flow_id?: string;
 }
 
-export type CaseMaterialStatus = 
-  | 'pending' 
-  | 'approved' 
-  | 'rejected' 
-  | 'correction_pending' 
-  | 'correction_submitted' 
-  | 'correction_approved' 
-  | 'correction_rejected';
-
 export interface CaseMaterial {
   id: string;
   case_id: string;
   name: string;
   type?: string;
   file_url?: string;
-  status: CaseMaterialStatus | string;
+  status: string;
   review_comment?: string;
   reviewed_by?: string;
   reviewed_at?: string;
-  correction_comment?: string;
-  correction_file_url?: string;
-  correction_count?: number;
-  last_corrected_at?: string;
-  last_correction_reviewed_at?: string;
-  service_item_material_id?: string;
-  is_required?: number;
   created_at: string;
   updated_at: string;
 }
@@ -371,7 +355,6 @@ export type CaseFlowAction =
 export const CaseFlowActionText: Record<string, string> = {
   submit: '提交申请',
   material_review: '材料审核',
-  material_correction_submit: '提交材料补正',
   accept: '受理',
   approve: '审批通过',
   reject: '审批驳回',
@@ -380,24 +363,4 @@ export const CaseFlowActionText: Record<string, string> = {
   return: '协同退回',
   collaborate_complete: '协同办结',
   complete: '办结',
-};
-
-export const CaseMaterialStatusText: Record<string, string> = {
-  pending: '待审核',
-  approved: '审核通过',
-  rejected: '审核不通过',
-  correction_pending: '待补正',
-  correction_submitted: '已提交补正',
-  correction_approved: '补正通过',
-  correction_rejected: '补正不通过',
-};
-
-export const CaseMaterialStatusColor: Record<string, string> = {
-  pending: 'orange',
-  approved: 'green',
-  rejected: 'red',
-  correction_pending: 'warning',
-  correction_submitted: 'blue',
-  correction_approved: 'green',
-  correction_rejected: 'red',
 };

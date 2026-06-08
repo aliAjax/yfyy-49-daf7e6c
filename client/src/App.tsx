@@ -3,7 +3,6 @@ import { useEffect } from 'react';
 import Login from './pages/Login';
 import CitizenLayout from './layouts/CitizenLayout';
 import AdminLayout from './layouts/AdminLayout';
-import TicketDisplayScreen from './pages/common/TicketDisplayScreen';
 import { useAuthStore } from './store/auth';
 import { useFavoriteStore } from './store/favorite';
 
@@ -28,7 +27,7 @@ function App() {
     }
   }, [isAuthenticated, user, loadFavorites, resetFavorites]);
 
-  const renderAuthRoutes = () => {
+  const renderRoutes = () => {
     if (!isAuthenticated) {
       return (
         <>
@@ -55,12 +54,7 @@ function App() {
     );
   };
 
-  return (
-    <Routes>
-      <Route path="/display" element={<TicketDisplayScreen />} />
-      {renderAuthRoutes()}
-    </Routes>
-  );
+  return <Routes>{renderRoutes()}</Routes>;
 }
 
 export default App;

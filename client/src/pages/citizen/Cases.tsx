@@ -1,5 +1,5 @@
-import { Card, Table, Tag, Input, Select, Space, Spin, Button, Alert } from 'antd';
-import { SearchOutlined, EditOutlined } from '@ant-design/icons';
+import { Card, Table, Tag, Input, Select, Space, Spin } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
@@ -92,28 +92,6 @@ function CitizenCases() {
       key: 'created_at',
       width: 180,
       render: (text: string) => dayjs(text).format('YYYY-MM-DD HH:mm'),
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 120,
-      render: (_: any, record: Case) => (
-        <Space size="small">
-          {record.status === 'material_correction' && (
-            <Button 
-              type="primary" 
-              size="small" 
-              icon={<EditOutlined />}
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(`/citizen/cases/${record.id}`);
-              }}
-            >
-              去补正
-            </Button>
-          )}
-        </Space>
-      ),
     },
   ];
 

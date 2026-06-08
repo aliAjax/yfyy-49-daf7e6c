@@ -1,5 +1,5 @@
 import { Card, Row, Col, Button, Empty, Spin, Tag } from 'antd';
-import { StarOutlined, CalendarOutlined, StarFilled, HistoryOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { StarOutlined, CalendarOutlined, StarFilled, ThunderboltOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -183,7 +183,7 @@ function FrequentlyUsedServices({
                 <Card
                   hoverable
                   className="service-card"
-                  onClick={() => navigate(`/citizen/services?item=${item.id}`)}
+                  onClick={() => handleAppointment(item)}
                   actions={[
                     <Button
                       key="favorite"
