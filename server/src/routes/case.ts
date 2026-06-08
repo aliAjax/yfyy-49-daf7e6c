@@ -17,6 +17,46 @@ function generateCaseNumber(serviceCode: string): string {
   return `${serviceCode}${today}${String(countResult.count + 1).padStart(4, '0')}`;
 }
 
+function applyWarningScope(req: AuthRequest, sql: string, params: any[], departmentId?: string) {
+  if (req.user!.role === 'approver') {
+    if (!req.user!.department_id) {
+      return `${sql} AND 1=0`;
+    }
+    params.push(req.user!.department_id);
+    return `${sql} AND c.department_id = ?`;
+  }
+
+  if (req.user!.role === 'window') {
+    if (!req.user!.department_id) {
+      return `${sql} AND 1=0`;
+    }
+    params.push(req.user!.department_id, req.user!.department_id);
+    return `${sql} AND (c.department_id = ? OR c.window_id IN (SELECT id FROM windows WHERE department_id = ?))`;
+  }
+
+  if (departmentId) {
+    params.push(departmentId);
+    return `${sql} AND c.department_id = ?`;
+  }
+
+  return sql;
+}
+
+function warningStatusSelect(now: string) {
+  return `
+    CASE
+      WHEN c.status = 'completed' AND c.deadline IS NOT NULL
+        AND COALESCE(c.completed_at, c.updated_at) <= c.deadline THEN 'on_time'
+      WHEN c.deadline < '${now}' THEN 'overdue'
+      ELSE 'upcoming'
+    END as warning_status,
+    CASE
+      WHEN c.status = 'completed' THEN 0
+      ELSE CAST((julianday(c.deadline) - julianday('${now}')) * 24 AS INTEGER)
+    END as remaining_hours
+  `;
+}
+
 // 获取我的办件（群众）
 router.get('/my', (req: AuthRequest, res) => {
   const { status, keyword, page = 1, pageSize = 20 } = req.query as any;
@@ -491,37 +531,212 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
 });
 
 // 超期预警列表
-router.get('/warnings/overdue', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
-  const { department_id, days = 3 } = req.query as any;
-  
+router.get('/warnings/list', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const {
+    department_id,
+    warning_status,
+    keyword,
+    days = 3,
+    page = 1,
+    pageSize = 20,
+  } = req.query as any;
+
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
   const warningDate = dayjs().add(Number(days), 'day').format('YYYY-MM-DD HH:mm:ss');
-  
-  let sql = `
-    SELECT c.*, si.name as service_item_name, d.name as department_name,
-      u.name as user_name
+  const baseParams: any[] = [warningDate];
+
+  let where = `
+    WHERE c.deadline IS NOT NULL
+      AND (
+        (c.status NOT IN ('completed', 'rejected') AND c.deadline <= ?)
+        OR (c.status = 'completed' AND COALESCE(c.completed_at, c.updated_at) <= c.deadline)
+      )
+  `;
+  where = applyWarningScope(req, where, baseParams, department_id);
+
+  if (warning_status === 'upcoming') {
+    where += ` AND c.status NOT IN ('completed', 'rejected') AND c.deadline >= ? AND c.deadline <= ?`;
+    baseParams.push(now, warningDate);
+  } else if (warning_status === 'overdue') {
+    where += ` AND c.status NOT IN ('completed', 'rejected') AND c.deadline < ?`;
+    baseParams.push(now);
+  } else if (warning_status === 'on_time') {
+    where += ` AND c.status = 'completed' AND COALESCE(c.completed_at, c.updated_at) <= c.deadline`;
+  } else {
+    where += ` AND (c.status != 'rejected')`;
+  }
+
+  if (keyword) {
+    where += ` AND (c.case_number LIKE ? OR c.applicant_name LIKE ? OR si.name LIKE ?)`;
+    baseParams.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const fromSql = `
     FROM cases c
     LEFT JOIN service_items si ON c.service_item_id = si.id
     LEFT JOIN departments d ON c.department_id = d.id
+    LEFT JOIN windows w ON c.window_id = w.id
     LEFT JOIN users u ON c.user_id = u.id
-    WHERE c.status IN ('reviewing', 'cross_department', 'material_reviewing')
+    LEFT JOIN users handler ON c.current_handler_id = handler.id
+    ${where}
+  `;
+
+  const total = db.prepare(`SELECT COUNT(*) as count ${fromSql}`).get(...baseParams) as any;
+
+  const listParams = [...baseParams, Number(pageSize), (Number(page) - 1) * Number(pageSize)];
+  const cases = db.prepare(`
+    SELECT c.*, si.name as service_item_name, d.name as department_name,
+      w.name as window_name, u.name as user_name, handler.name as handler_name,
+      ${warningStatusSelect(now)}
+    ${fromSql}
+    ORDER BY
+      CASE warning_status WHEN 'overdue' THEN 0 WHEN 'upcoming' THEN 1 ELSE 2 END,
+      c.deadline ASC
+    LIMIT ? OFFSET ?
+  `).all(...listParams);
+
+  res.json({ cases, total: total.count, page: Number(page), pageSize: Number(pageSize) });
+});
+
+router.get('/warnings/overdue', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { department_id, days = 3 } = req.query as any;
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const warningDate = dayjs().add(Number(days), 'day').format('YYYY-MM-DD HH:mm:ss');
+  const params: any[] = [warningDate];
+
+  let where = `
+    WHERE c.status NOT IN ('completed', 'rejected')
       AND c.deadline IS NOT NULL
       AND c.deadline <= ?
   `;
-  const params: any[] = [warningDate];
+  where = applyWarningScope(req, where, params, department_id);
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
-    sql += ' AND c.department_id = ?';
-    params.push(req.user!.department_id);
-  }
-  if (department_id && req.user!.role === 'admin') {
-    sql += ' AND c.department_id = ?';
-    params.push(department_id);
-  }
-
-  sql += ' ORDER BY c.deadline ASC';
-  const cases = db.prepare(sql).all(...params);
+  const cases = db.prepare(`
+    SELECT c.*, si.name as service_item_name, d.name as department_name,
+      w.name as window_name, u.name as user_name, handler.name as handler_name,
+      ${warningStatusSelect(now)}
+    FROM cases c
+    LEFT JOIN service_items si ON c.service_item_id = si.id
+    LEFT JOIN departments d ON c.department_id = d.id
+    LEFT JOIN windows w ON c.window_id = w.id
+    LEFT JOIN users u ON c.user_id = u.id
+    LEFT JOIN users handler ON c.current_handler_id = handler.id
+    ${where}
+    ORDER BY c.deadline ASC
+  `).all(...params);
 
   res.json({ cases });
+});
+
+// 超期预警统计
+router.get('/warnings/stats', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { department_id, days = 3 } = req.query as any;
+  const now = dayjs().format('YYYY-MM-DD HH:mm:ss');
+  const warningDate = dayjs().add(Number(days), 'day').format('YYYY-MM-DD HH:mm:ss');
+
+  const scopedParams: any[] = [];
+  const scopedWhere = applyWarningScope(req, 'WHERE 1=1', scopedParams, department_id);
+
+  const stats = db.prepare(`
+    SELECT
+      SUM(CASE WHEN c.status NOT IN ('completed', 'rejected')
+        AND c.deadline IS NOT NULL
+        AND c.deadline >= ?
+        AND c.deadline <= ? THEN 1 ELSE 0 END) as upcoming,
+      SUM(CASE WHEN c.status NOT IN ('completed', 'rejected')
+        AND c.deadline IS NOT NULL
+        AND c.deadline < ? THEN 1 ELSE 0 END) as overdue,
+      SUM(CASE WHEN c.status = 'completed'
+        AND c.deadline IS NOT NULL
+        AND COALESCE(c.completed_at, c.updated_at) <= c.deadline THEN 1 ELSE 0 END) as on_time
+    FROM cases c
+    ${scopedWhere}
+  `).get(now, warningDate, now, ...scopedParams) as any;
+
+  res.json({
+    upcoming: stats.upcoming || 0,
+    overdue: stats.overdue || 0,
+    on_time: stats.on_time || 0,
+  });
+});
+
+// 催办预警
+router.post('/warnings/:id/remind', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { content } = req.body;
+
+  const caseItem = db.prepare(`
+    SELECT c.*, si.name as service_item_name, d.name as department_name, w.name as window_name
+    FROM cases c
+    LEFT JOIN service_items si ON c.service_item_id = si.id
+    LEFT JOIN departments d ON c.department_id = d.id
+    LEFT JOIN windows w ON c.window_id = w.id
+    WHERE c.id = ?
+  `).get(id) as any;
+
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+  if (caseItem.status === 'completed' || caseItem.status === 'rejected') {
+    return res.status(400).json({ message: '已结束办件无需催办' });
+  }
+  if (!caseItem.deadline) {
+    return res.status(400).json({ message: '该办件未设置办理期限' });
+  }
+
+  const scopeParams: any[] = [];
+  const scopeSql = applyWarningScope(req, 'WHERE c.id = ?', scopeParams, undefined);
+  const scopedCase = db.prepare(`SELECT c.id FROM cases c ${scopeSql}`).get(id, ...scopeParams);
+  if (!scopedCase && req.user!.role !== 'admin') {
+    return res.status(403).json({ message: '无权催办此办件' });
+  }
+
+  const recipients = new Map<string, any>();
+  if (caseItem.current_handler_id) {
+    const handler = db.prepare("SELECT id, name FROM users WHERE id = ? AND status = 'active'")
+      .get(caseItem.current_handler_id) as any;
+    if (handler) recipients.set(handler.id, handler);
+  }
+
+  const workers = db.prepare(`
+    SELECT DISTINCT u.id, u.name
+    FROM users u
+    WHERE u.status = 'active'
+      AND u.role IN ('approver', 'window')
+      AND (
+        u.department_id = ?
+        OR u.id IN (
+          SELECT u2.id
+          FROM users u2
+          JOIN windows w2 ON u2.department_id = w2.department_id
+          WHERE w2.id = ?
+        )
+      )
+  `).all(caseItem.department_id, caseItem.window_id || '') as any[];
+  workers.forEach((worker) => recipients.set(worker.id, worker));
+
+  if (recipients.size === 0) {
+    return res.status(400).json({ message: '未找到可接收催办的工作人员' });
+  }
+
+  const remindContent = content || `办件${caseItem.case_number}即将或已经超期，请尽快处理。`;
+  const tx = db.transaction(() => {
+    for (const recipient of recipients.values()) {
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, type, title, content, related_id)
+        VALUES (?, ?, 'case', '办件催办提醒', ?, ?)
+      `).run(uuidv4(), recipient.id, remindContent, caseItem.id);
+    }
+
+    db.prepare(`
+      INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+      VALUES (?, ?, '催办办件', '超期预警', ?)
+    `).run(req.user!.id, req.user!.name, `催办办件${caseItem.case_number}`);
+  });
+
+  tx();
+
+  res.json({ message: '催办通知已发送', notified_count: recipients.size });
 });
 
 export default router;

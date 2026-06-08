@@ -12,6 +12,7 @@ import {
   HistoryOutlined,
   SoundOutlined,
   FormOutlined,
+  AlertOutlined,
   ClockCircleOutlined,
   CheckCircleOutlined,
   CalendarOutlined,
@@ -33,6 +34,7 @@ import Evaluations from '../pages/admin/Evaluations';
 import Statistics from '../pages/admin/Statistics';
 import OperationLogs from '../pages/admin/OperationLogs';
 import AppointmentBoard from '../pages/admin/AppointmentBoard';
+import OverdueWarningCenter from '../pages/admin/OverdueWarningCenter';
 import type { UserRole } from '../types';
 import { RoleText } from '../types';
 
@@ -48,6 +50,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/number-sources', icon: <NumberOutlined />, label: '号源管理' },
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
     { key: '/admin/cases', icon: <FileTextOutlined />, label: '办件管理' },
+    { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
     { key: '/admin/evaluations', icon: <StarOutlined />, label: '评价管理' },
     { key: '/admin/statistics', icon: <BarChartOutlined />, label: '统计分析' },
     { key: '/admin/logs', icon: <HistoryOutlined />, label: '操作日志' },
@@ -57,12 +60,13 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
     { key: '/admin/calling', icon: <SoundOutlined />, label: '叫号系统' },
     { key: '/admin/case-accept', icon: <FormOutlined />, label: '办件受理' },
+    { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
   ],
   approver: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/pending-approval', icon: <ClockCircleOutlined />, label: '待我审批' },
     { key: '/admin/approved', icon: <CheckCircleOutlined />, label: '我已审批' },
-    { key: '/admin/overdue-warning', icon: <ClockCircleOutlined />, label: '超期预警' },
+    { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
   ],
   citizen: [],
 };
@@ -145,7 +149,7 @@ function AdminLayout() {
               <Route path="/case-accept" element={<CaseManagement />} />
               <Route path="/pending-approval" element={<CaseReview />} />
               <Route path="/approved" element={<CaseReview />} />
-              <Route path="/overdue-warning" element={<CaseReview />} />
+              <Route path="/overdue-warning" element={<OverdueWarningCenter />} />
               <Route path="/logs" element={<OperationLogs />} />
               <Route path="*" element={<AdminDashboard />} />
             </Routes>
