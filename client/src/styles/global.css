@@ -161,3 +161,37 @@ body {
   font-size: 12px;
   margin-left: 8px;
 }
+
+.receipt-page {
+  background: #f0f2f5;
+  min-height: 100vh;
+  padding: 40px 20px;
+}
+
+@media print {
+  body {
+    background: white !important;
+  }
+
+  .receipt-page {
+    background: white !important;
+    padding: 0 !important;
+    min-height: auto !important;
+  }
+
+  .layout-header,
+  .ant-layout-sider,
+  .ant-layout-header,
+  .ant-layout-footer {
+    display: none !important;
+  }
+
+  .page-content {
+    padding: 0 !important;
+  }
+
+  .ant-modal-mask,
+  .ant-modal-wrap {
+    position: static !important;
+  }
+}

@@ -1,5 +1,5 @@
-import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List } from 'antd';
-import { ArrowLeftOutlined, StarOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space } from 'antd';
+import { ArrowLeftOutlined, StarOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api';
@@ -7,6 +7,7 @@ import type { Case, CaseMaterial, CaseFlow, Evaluation, ServiceItemMaterial } fr
 import { CaseStatusText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
+import CaseReceipt from '../../components/CaseReceipt';
 
 const { TextArea } = Input;
 
@@ -19,6 +20,7 @@ function CitizenCaseDetail() {
   const [flows, setFlows] = useState<CaseFlow[]>([]);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [evalModalVisible, setEvalModalVisible] = useState(false);
+  const [receiptVisible, setReceiptVisible] = useState(false);
   const [evalForm] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
 
@@ -145,9 +147,14 @@ function CitizenCaseDetail() {
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/citizen/cases')}>
-          返回列表
-        </Button>
+        <Space>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/citizen/cases')}>
+            返回列表
+          </Button>
+          <Button type="primary" icon={<PrinterOutlined />} onClick={() => setReceiptVisible(true)}>
+            查看回执
+          </Button>
+        </Space>
       </div>
 
       <Card title="办件基本信息" style={{ marginBottom: 16 }}>
@@ -344,6 +351,22 @@ function CitizenCaseDetail() {
             <TextArea rows={3} placeholder="请输入您的意见和建议（选填）" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="办件受理回执"
+        open={receiptVisible}
+        onCancel={() => setReceiptVisible(false)}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        {caseData && (
+          <CaseReceipt
+            caseData={caseData}
+            onClose={() => setReceiptVisible(false)}
+          />
+        )}
       </Modal>
     </div>
   );

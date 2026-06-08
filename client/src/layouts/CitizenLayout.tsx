@@ -18,6 +18,7 @@ import CitizenCaseDetail from '../pages/citizen/CaseDetail';
 import CitizenEvaluations from '../pages/citizen/Evaluations';
 import CitizenProfile from '../pages/citizen/Profile';
 import CitizenNotifications from '../pages/citizen/Notifications';
+import CaseReceiptPage from '../pages/common/CaseReceiptPage';
 import { useEffect, useState } from 'react';
 import api from '../api';
 
@@ -106,6 +107,7 @@ function CitizenLayout() {
               <Route path="/appointments" element={<CitizenAppointments />} />
               <Route path="/cases" element={<CitizenCases />} />
               <Route path="/cases/:id" element={<CitizenCaseDetail />} />
+              <Route path="/cases/:id/receipt" element={<CaseReceiptPage />} />
               <Route path="/evaluations" element={<CitizenEvaluations />} />
               <Route path="/notifications" element={<CitizenNotifications onUnreadCountChange={fetchUnreadCount} />} />
               <Route path="/profile" element={<CitizenProfile />} />

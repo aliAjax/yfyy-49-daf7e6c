@@ -1,15 +1,18 @@
 import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List } from 'antd';
-import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../api';
 import type { Case, Department, CaseMaterial, CaseFlow, ServiceItemMaterial } from '../../types';
 import { CaseStatusText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
+import CaseReceipt from '../../components/CaseReceipt';
 
 const { TextArea } = AntInput;
 
 function CaseReview() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [cases, setCases] = useState<Case[]>([]);
   const [total, setTotal] = useState(0);
@@ -19,6 +22,7 @@ function CaseReview() {
   const [keyword, setKeyword] = useState('');
   const [serviceItemId, setServiceItemId] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
+  const [receiptVisible, setReceiptVisible] = useState(false);
   const [currentCase, setCurrentCase] = useState<Case | null>(null);
   const [caseMaterials, setCaseMaterials] = useState<CaseMaterial[]>([]);
   const [caseFlows, setCaseFlows] = useState<CaseFlow[]>([]);
@@ -96,6 +100,11 @@ function CaseReview() {
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const handleViewReceipt = (caseItem: Case) => {
+    setCurrentCase(caseItem);
+    setReceiptVisible(true);
   };
 
   const handleApprove = (caseItem: Case) => {
@@ -224,12 +233,15 @@ function CaseReview() {
     {
       title: '操作',
       key: 'action',
-      width: 260,
+      width: 320,
       fixed: 'right' as const,
       render: (_: any, record: Case) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             详情
+          </Button>
+          <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handleViewReceipt(record)}>
+            回执
           </Button>
           <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record)}>
             通过
@@ -329,6 +341,14 @@ function CaseReview() {
         footer={[
           <Button key="close" onClick={() => setDetailVisible(false)}>
             关闭
+          </Button>,
+          <Button key="receipt" icon={<PrinterOutlined />} onClick={() => {
+            setDetailVisible(false);
+            if (currentCase) {
+              handleViewReceipt(currentCase);
+            }
+          }}>
+            查看回执
           </Button>,
         ]}
         width={800}
@@ -538,6 +558,22 @@ function CaseReview() {
             <TextArea rows={4} placeholder="请输入流转说明（选填）" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="办件受理回执"
+        open={receiptVisible}
+        onCancel={() => setReceiptVisible(false)}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        {currentCase && (
+          <CaseReceipt
+            caseData={currentCase}
+            onClose={() => setReceiptVisible(false)}
+          />
+        )}
       </Modal>
     </div>
   );

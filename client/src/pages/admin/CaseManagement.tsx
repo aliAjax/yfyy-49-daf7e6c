@@ -1,13 +1,16 @@
 import { Card, Table, Button, Select, Input, Modal, Tag, message, Space, Descriptions, Row, Col, Statistic, List } from 'antd';
-import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../api';
 import type { Case, Department, ServiceItem, CaseMaterial, CaseFlow, ServiceItemMaterial } from '../../types';
 import { CaseStatusText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
+import CaseReceipt from '../../components/CaseReceipt';
 
 function CaseManagement() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [cases, setCases] = useState<Case[]>([]);
   const [total, setTotal] = useState(0);
@@ -20,6 +23,7 @@ function CaseManagement() {
   const [serviceItemId, setServiceItemId] = useState<string>('');
   const [keyword, setKeyword] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
+  const [receiptVisible, setReceiptVisible] = useState(false);
   const [currentCase, setCurrentCase] = useState<Case | null>(null);
   const [caseMaterials, setCaseMaterials] = useState<CaseMaterial[]>([]);
   const [caseFlows, setCaseFlows] = useState<CaseFlow[]>([]);
@@ -109,6 +113,11 @@ function CaseManagement() {
     }
   };
 
+  const handleViewReceipt = (caseItem: Case) => {
+    setCurrentCase(caseItem);
+    setReceiptVisible(true);
+  };
+
   const getStatusColor = (status: string) => {
     const colorMap: Record<string, string> = {
       draft: 'default',
@@ -179,12 +188,15 @@ function CaseManagement() {
     {
       title: '操作',
       key: 'action',
-      width: 100,
+      width: 160,
       fixed: 'right' as const,
       render: (_: any, record: Case) => (
         <Space size="small">
           <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             详情
+          </Button>
+          <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handleViewReceipt(record)}>
+            回执
           </Button>
         </Space>
       ),
@@ -329,6 +341,14 @@ function CaseManagement() {
           <Button key="close" onClick={() => setDetailVisible(false)}>
             关闭
           </Button>,
+          <Button key="receipt" icon={<PrinterOutlined />} onClick={() => {
+            setDetailVisible(false);
+            if (currentCase) {
+              handleViewReceipt(currentCase);
+            }
+          }}>
+            查看回执
+          </Button>,
         ]}
         width={800}
         destroyOnClose
@@ -448,6 +468,22 @@ function CaseManagement() {
               </div>
             )}
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="办件受理回执"
+        open={receiptVisible}
+        onCancel={() => setReceiptVisible(false)}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        {currentCase && (
+          <CaseReceipt
+            caseData={currentCase}
+            onClose={() => setReceiptVisible(false)}
+          />
         )}
       </Modal>
     </div>
