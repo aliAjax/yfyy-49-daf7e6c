@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import Login from './pages/Login';
 import CitizenLayout from './layouts/CitizenLayout';
 import AdminLayout from './layouts/AdminLayout';
+import TicketDisplayScreen from './pages/common/TicketDisplayScreen';
 import { useAuthStore } from './store/auth';
 
 function App() {
@@ -43,7 +44,12 @@ function App() {
     );
   };
 
-  return <Routes>{renderRoutes()}</Routes>;
+  return (
+    <Routes>
+      <Route path="/display" element={<TicketDisplayScreen />} />
+      {renderRoutes()}
+    </Routes>
+  );
 }
 
 export default App;

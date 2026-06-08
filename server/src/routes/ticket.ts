@@ -6,6 +6,99 @@ import dayjs from 'dayjs';
 
 const router = Router();
 
+// 大屏展示数据（公开接口，适合大厅屏幕轮询）
+router.get('/display/screen', (req, res) => {
+  const today = dayjs().format('YYYY-MM-DD');
+  const waitLimit = Math.min(Math.max(Number(req.query.wait_limit) || 10, 1), 30);
+
+  const callingTickets = db.prepare(`
+    SELECT
+      t.*,
+      si.name as service_item_name,
+      si.code as service_item_code,
+      w.name as window_name,
+      w.number as window_number
+    FROM tickets t
+    LEFT JOIN service_items si ON t.service_item_id = si.id
+    LEFT JOIN windows w ON t.window_id = w.id
+    WHERE t.status IN ('calling', 'processing')
+      AND DATE(t.created_at) = ?
+    ORDER BY
+      CASE t.status WHEN 'calling' THEN 0 ELSE 1 END,
+      COALESCE(t.called_at, t.updated_at, t.created_at) DESC
+  `).all(today);
+
+  const waitingTickets = db.prepare(`
+    SELECT
+      t.*,
+      si.name as service_item_name,
+      si.code as service_item_code,
+      w.name as window_name,
+      w.number as window_number
+    FROM tickets t
+    LEFT JOIN service_items si ON t.service_item_id = si.id
+    LEFT JOIN windows w ON t.window_id = w.id
+    WHERE t.status = 'waiting'
+      AND DATE(t.created_at) = ?
+    ORDER BY t.created_at ASC
+    LIMIT ?
+  `).all(today, waitLimit);
+
+  const statRows = db.prepare(`
+    SELECT status, COUNT(*) as count
+    FROM tickets
+    WHERE DATE(created_at) = ?
+    GROUP BY status
+  `).all(today);
+
+  const stats: any = {
+    waiting: 0,
+    calling: 0,
+    processing: 0,
+    completed: 0,
+    cancelled: 0,
+    total: 0,
+  };
+
+  statRows.forEach((row: any) => {
+    stats[row.status] = row.count;
+    stats.total += row.count;
+  });
+
+  const windows = db.prepare(`
+    SELECT
+      w.*,
+      t.id as ticket_id,
+      t.ticket_number as current_ticket_number,
+      t.status as current_ticket_status,
+      t.applicant_name as current_applicant_name,
+      si.name as current_service_item_name
+    FROM windows w
+    LEFT JOIN tickets t ON t.id = (
+      SELECT t2.id
+      FROM tickets t2
+      WHERE t2.window_id = w.id
+        AND t2.status IN ('calling', 'processing')
+        AND DATE(t2.created_at) = ?
+      ORDER BY
+        CASE t2.status WHEN 'calling' THEN 0 ELSE 1 END,
+        COALESCE(t2.called_at, t2.updated_at, t2.created_at) DESC
+      LIMIT 1
+    )
+    LEFT JOIN service_items si ON t.service_item_id = si.id
+    WHERE w.status = 'open'
+    ORDER BY w.number ASC
+  `).all(today);
+
+  res.json({
+    calling_tickets: callingTickets,
+    waiting_tickets: waitingTickets,
+    stats,
+    windows,
+    current_time: new Date().toISOString(),
+  });
+});
+
 router.use(authMiddleware);
 
 // 获取当前等待队列

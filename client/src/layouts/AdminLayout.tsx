@@ -16,6 +16,7 @@ import {
   ClockCircleOutlined,
   CheckCircleOutlined,
   CalendarOutlined,
+  DesktopOutlined,
   LogoutOutlined,
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
@@ -40,7 +41,7 @@ import { RoleText } from '../types';
 
 const { Header, Content, Sider } = Layout;
 
-const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; label: string }>> = {
+const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; label: string; external?: boolean }>> = {
   admin: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/service-items', icon: <UnorderedListOutlined />, label: '事项管理' },
@@ -49,6 +50,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/windows', icon: <AppstoreOutlined />, label: '窗口管理' },
     { key: '/admin/number-sources', icon: <NumberOutlined />, label: '号源管理' },
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
+    { key: '/display', icon: <DesktopOutlined />, label: '叫号大屏', external: true },
     { key: '/admin/cases', icon: <FileTextOutlined />, label: '办件管理' },
     { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
     { key: '/admin/evaluations', icon: <StarOutlined />, label: '评价管理' },
@@ -59,6 +61,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
     { key: '/admin/calling', icon: <SoundOutlined />, label: '叫号系统' },
+    { key: '/display', icon: <DesktopOutlined />, label: '叫号大屏', external: true },
     { key: '/admin/case-accept', icon: <FormOutlined />, label: '办件受理' },
     { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
   ],
@@ -89,6 +92,14 @@ function AdminLayout() {
 
   const role = (user?.role || 'admin') as UserRole;
   const menuItems = menuConfig[role] || [];
+  const handleMenuClick = ({ key }: { key: string }) => {
+    const item = menuItems.find((menuItem) => menuItem.key === key);
+    if (item?.external) {
+      window.open(key, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    navigate(key);
+  };
 
   const userMenuItems = [
     {
@@ -128,7 +139,7 @@ function AdminLayout() {
             mode="inline"
             selectedKeys={[selectedKey]}
             items={menuItems}
-            onClick={({ key }) => navigate(key)}
+            onClick={handleMenuClick}
             style={{ height: '100%', borderRight: 0 }}
           />
         </Sider>
