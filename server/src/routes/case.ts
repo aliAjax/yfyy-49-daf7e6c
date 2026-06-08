@@ -528,9 +528,9 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE cases SET department_id = ?, status = 'cross_department', 
-        current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
+        current_handler_id = NULL, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(targetDepartmentId, targetUserId, id);
+    `).run(targetDepartmentId, id);
 
     db.prepare(`
       INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
@@ -579,6 +579,20 @@ router.post('/:id/receive', requireRoles('approver', 'admin'), (req: AuthRequest
 
   if (caseItem.current_handler_id && caseItem.current_handler_id !== req.user!.id) {
     return res.status(400).json({ message: '该办件已被其他人接收' });
+  }
+
+  const lastTransferFlow = db.prepare(`
+    SELECT * FROM case_flows
+    WHERE case_id = ? AND action = 'transfer'
+    ORDER BY created_at DESC LIMIT 1
+  `).get(id) as any;
+
+  if (
+    req.user!.role === 'approver' &&
+    lastTransferFlow?.to_user_id &&
+    lastTransferFlow.to_user_id !== req.user!.id
+  ) {
+    return res.status(403).json({ message: '该办件已指定其他审批人接收' });
   }
 
   const tx = db.transaction(() => {
@@ -790,13 +804,24 @@ router.get('/collaboration/todo', requireRoles('approver', 'admin'), (req: AuthR
   `;
   const params: any[] = [];
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
+  if (req.user!.role === 'approver' && req.user!.department_id && type !== 'initiated') {
     sql += ' AND c.department_id = ?';
     params.push(req.user!.department_id);
+
+    sql += ` AND (
+      c.current_handler_id IS NULL
+      OR c.current_handler_id = ?
+      OR cf.to_user_id = ?
+    )`;
+    params.push(req.user!.id, req.user!.id);
   }
 
   if (type === 'pending_receive') {
     sql += ' AND c.current_handler_id IS NULL';
+    if (req.user!.role === 'approver') {
+      sql += ' AND (cf.to_user_id IS NULL OR cf.to_user_id = ?)';
+      params.push(req.user!.id);
+    }
   } else if (type === 'mine') {
     sql += ' AND c.current_handler_id = ?';
     params.push(req.user!.id);
@@ -838,18 +863,32 @@ router.get('/collaboration/stats', requireRoles('approver', 'admin'), (req: Auth
     )
     WHERE c.status = 'cross_department'
   `;
-  const deptCondition = isApprover && deptId ? ' AND c.department_id = ?' : '';
-  const deptParams = isApprover && deptId ? [deptId] : [];
+  const visibilityCondition = isApprover && deptId ? ` AND c.department_id = ? AND (
+    c.current_handler_id IS NULL
+    OR c.current_handler_id = ?
+    OR cf.to_user_id = ?
+  )` : '';
+  const visibilityParams = isApprover && deptId ? [deptId, userId, userId] : [];
 
-  const total = db.prepare(`SELECT COUNT(*) as count ${baseSql} ${deptCondition}`).get(...deptParams) as any;
+  const pendingReceiveCondition = isApprover && deptId
+    ? ' AND c.department_id = ? AND c.current_handler_id IS NULL AND (cf.to_user_id IS NULL OR cf.to_user_id = ?)'
+    : ' AND c.current_handler_id IS NULL';
+  const pendingReceiveParams = isApprover && deptId ? [deptId, userId] : [];
+
+  const mineCondition = isApprover && deptId
+    ? ' AND c.department_id = ? AND c.current_handler_id = ?'
+    : ' AND c.current_handler_id = ?';
+  const mineParams = isApprover && deptId ? [deptId, userId] : [userId];
+
+  const total = db.prepare(`SELECT COUNT(*) as count ${baseSql} ${visibilityCondition}`).get(...visibilityParams) as any;
 
   const pendingReceive = db.prepare(
-    `SELECT COUNT(*) as count ${baseSql} ${deptCondition} AND c.current_handler_id IS NULL`
-  ).get(...deptParams) as any;
+    `SELECT COUNT(*) as count ${baseSql} ${pendingReceiveCondition}`
+  ).get(...pendingReceiveParams) as any;
 
   const mine = db.prepare(
-    `SELECT COUNT(*) as count ${baseSql} ${deptCondition} AND c.current_handler_id = ?`
-  ).get(...[...deptParams, userId]) as any;
+    `SELECT COUNT(*) as count ${baseSql} ${mineCondition}`
+  ).get(...mineParams) as any;
 
   const initiated = db.prepare(
     `SELECT COUNT(*) as count ${baseSql} AND cf.from_user_id = ?`
