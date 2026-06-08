@@ -57,6 +57,18 @@ export interface ServiceItem {
   updated_at: string;
 }
 
+export interface ServiceItemMaterial {
+  id: string;
+  service_item_id: string;
+  name: string;
+  is_required: number;
+  description?: string;
+  example?: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Case {
   id: string;
   case_number: string;

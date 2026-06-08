@@ -157,6 +157,14 @@ router.get('/:id', (req: AuthRequest, res) => {
     ORDER BY cf.created_at ASC
   `).all(id);
 
+  const requiredMaterialList = db.prepare(`
+    SELECT * FROM service_item_materials 
+    WHERE service_item_id = ? 
+    ORDER BY sort_order ASC, created_at ASC
+  `).all(caseItem.service_item_id);
+
+  caseItem.material_list = requiredMaterialList.length > 0 ? requiredMaterialList : null;
+
   res.json({ case: caseItem, materials, flows });
 });
 
@@ -305,6 +313,11 @@ router.post('/:id/accept', requireRoles('window', 'admin'), (req: AuthRequest, r
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已受理`, id);
   }
 
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '受理办件', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `受理办件：${caseItem.case_number}`);
+
   res.json({ message: '受理成功' });
 });
 
@@ -349,6 +362,11 @@ router.post('/:id/approve', requireRoles('approver', 'admin'), (req: AuthRequest
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已审批通过`, id);
   }
 
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '审批通过', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `审批通过办件：${caseItem.case_number}`);
+
   res.json({ message: '审批通过' });
 });
 
@@ -387,6 +405,11 @@ router.post('/:id/reject', requireRoles('approver', 'admin'), (req: AuthRequest,
       VALUES (?, ?, 'case', '办件被驳回', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}被驳回：${comment || '审批驳回'}`, id);
   }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '审批驳回', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `审批驳回办件：${caseItem.case_number}，原因：${comment || '审批驳回'}`);
 
   res.json({ message: '已驳回' });
 });
@@ -433,6 +456,11 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
   });
 
   tx();
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '跨科室流转', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `办件${caseItem.case_number} 跨科室流转：${caseItem.department_id} → ${to_department_id}`);
 
   res.json({ message: '流转成功' });
 });
@@ -486,6 +514,11 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
       VALUES (?, ?, 'case', '办件已办结', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已办结，请评价`, id);
   }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '办结', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `办结办件：${caseItem.case_number}`);
 
   res.json({ message: '办结成功' });
 });

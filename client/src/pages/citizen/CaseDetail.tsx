@@ -1,10 +1,11 @@
-import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message } from 'antd';
+import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List } from 'antd';
 import { ArrowLeftOutlined, StarOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api';
-import type { Case, CaseMaterial, CaseFlow, Evaluation } from '../../types';
+import type { Case, CaseMaterial, CaseFlow, Evaluation, ServiceItemMaterial } from '../../types';
 import { CaseStatusText } from '../../types';
+import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
 
 const { TextArea } = Input;
@@ -188,7 +189,46 @@ function CitizenCaseDetail() {
         )}
       </Card>
 
-      <Card title="材料清单" style={{ marginBottom: 16 }}>
+      {caseData && hasCaseMaterials(caseData) && (
+        <Card title="所需材料" style={{ marginBottom: 16 }}>
+          <List
+            dataSource={getCaseMaterialList(caseData)}
+            renderItem={(item) => (
+              <List.Item key={item.id}>
+                <List.Item.Meta
+                  avatar={
+                    item.is_required ? (
+                      <Tag color="red" style={{ margin: 0 }}>
+                        必填
+                      </Tag>
+                    ) : (
+                      <Tag color="default" style={{ margin: 0 }}>
+                        选填
+                      </Tag>
+                    )
+                  }
+                  title={item.name}
+                  description={
+                    <div style={{ fontSize: 13 }}>
+                      {item.description && (
+                        <div style={{ marginBottom: 4 }}>{item.description}</div>
+                      )}
+                      {item.example && (
+                        <div style={{ color: '#999', fontSize: 12 }}>
+                          <span style={{ color: '#1890ff' }}>示例：</span>
+                          {item.example}
+                        </div>
+                      )}
+                    </div>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        </Card>
+      )}
+
+      <Card title="已提交材料" style={{ marginBottom: 16 }}>
         {materials.length > 0 ? (
           materials.map((material, index) => (
             <div

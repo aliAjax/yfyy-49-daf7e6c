@@ -31,6 +31,12 @@ router.post('/departments', requireRoles('admin'), (req: AuthRequest, res) => {
     .run(id, name, code, description || null);
 
   const department = db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '新增科室', '科室管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `新增科室：${name}（${code}）`);
+
   res.status(201).json({ department });
 });
 
@@ -44,24 +50,46 @@ router.put('/departments/:id', requireRoles('admin'), (req: AuthRequest, res) =>
     return res.status(400).json({ message: '科室名称或编码已存在' });
   }
 
+  const oldDept = db.prepare('SELECT * FROM departments WHERE id = ?').get(id) as any;
+  if (!oldDept) {
+    return res.status(404).json({ message: '科室不存在' });
+  }
+
   db.prepare(`
     UPDATE departments SET name = ?, code = ?, description = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(name, code, description || null, id);
 
   const department = db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '编辑科室', '科室管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `编辑科室：${oldDept.name}（${oldDept.code}）`);
+
   res.json({ department });
 });
 
 router.delete('/departments/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
   
+  const dept = db.prepare('SELECT * FROM departments WHERE id = ?').get(id) as any;
+  if (!dept) {
+    return res.status(404).json({ message: '科室不存在' });
+  }
+
   const users = db.prepare('SELECT COUNT(*) as count FROM users WHERE department_id = ?').get(id) as any;
   if (users.count > 0) {
     return res.status(400).json({ message: '该科室下还有用户，无法删除' });
   }
 
   db.prepare('DELETE FROM departments WHERE id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '删除科室', '科室管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `删除科室：${dept.name}（${dept.code}）`);
+
   res.json({ message: '删除成功' });
 });
 
@@ -121,12 +149,22 @@ router.post('/users', requireRoles('admin'), (req: AuthRequest, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
   delete user.password;
 
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '新增用户', '用户管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `新增用户：${name}（${username}）`);
+
   res.status(201).json({ user });
 });
 
 router.put('/users/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
   const { name, role, department_id, phone, email, status } = req.body;
+
+  const oldUser = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+  if (!oldUser) {
+    return res.status(404).json({ message: '用户不存在' });
+  }
 
   db.prepare(`
     UPDATE users SET name = ?, role = ?, department_id = ?, phone = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP
@@ -135,6 +173,11 @@ router.put('/users/:id', requireRoles('admin'), (req: AuthRequest, res) => {
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
   delete user.password;
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '编辑用户', '用户管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `编辑用户：${oldUser.name}（${oldUser.username}）`);
 
   res.json({ user });
 });
@@ -146,7 +189,18 @@ router.delete('/users/:id', requireRoles('admin'), (req: AuthRequest, res) => {
     return res.status(400).json({ message: '不能删除自己的账号' });
   }
 
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
+  if (!user) {
+    return res.status(404).json({ message: '用户不存在' });
+  }
+
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '删除用户', '用户管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `删除用户：${user.name}（${user.username}）`);
+
   res.json({ message: '删除成功' });
 });
 
@@ -189,6 +243,12 @@ router.post('/windows', requireRoles('admin'), (req: AuthRequest, res) => {
     .run(id, name, number, department_id || null, status, type);
 
   const window = db.prepare('SELECT * FROM windows WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '新增窗口', '窗口管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `新增窗口：${name}（${number}）`);
+
   res.status(201).json({ window });
 });
 
@@ -196,18 +256,41 @@ router.put('/windows/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
   const { name, number, department_id, status, type } = req.body;
 
+  const oldWindow = db.prepare('SELECT * FROM windows WHERE id = ?').get(id) as any;
+  if (!oldWindow) {
+    return res.status(404).json({ message: '窗口不存在' });
+  }
+
   db.prepare(`
     UPDATE windows SET name = ?, number = ?, department_id = ?, status = ?, type = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(name, number, department_id || null, status, type, id);
 
   const window = db.prepare('SELECT * FROM windows WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '编辑窗口', '窗口管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `编辑窗口：${oldWindow.name}（${oldWindow.number}）`);
+
   res.json({ window });
 });
 
 router.delete('/windows/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
+  
+  const window = db.prepare('SELECT * FROM windows WHERE id = ?').get(id) as any;
+  if (!window) {
+    return res.status(404).json({ message: '窗口不存在' });
+  }
+
   db.prepare('DELETE FROM windows WHERE id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '删除窗口', '窗口管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `删除窗口：${window.name}（${window.number}）`);
+
   res.json({ message: '删除成功' });
 });
 

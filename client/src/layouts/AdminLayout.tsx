@@ -30,6 +30,7 @@ import CaseReview from '../pages/admin/CaseReview';
 import TicketQueue from '../pages/admin/TicketQueue';
 import Evaluations from '../pages/admin/Evaluations';
 import Statistics from '../pages/admin/Statistics';
+import OperationLogs from '../pages/admin/OperationLogs';
 import type { UserRole } from '../types';
 import { RoleText } from '../types';
 
@@ -140,7 +141,7 @@ function AdminLayout() {
               <Route path="/pending-approval" element={<CaseReview />} />
               <Route path="/approved" element={<CaseReview />} />
               <Route path="/overdue-warning" element={<CaseReview />} />
-              <Route path="/logs" element={<CaseManagement />} />
+              <Route path="/logs" element={<OperationLogs />} />
               <Route path="*" element={<AdminDashboard />} />
             </Routes>
           </Content>

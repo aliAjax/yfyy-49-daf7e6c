@@ -68,6 +68,19 @@ export interface ServiceItem {
   sort_order: number;
   created_at: string;
   updated_at: string;
+  material_list?: ServiceItemMaterial[];
+}
+
+export interface ServiceItemMaterial {
+  id: string;
+  service_item_id: string;
+  name: string;
+  is_required: number;
+  description?: string;
+  example?: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Appointment {
@@ -138,6 +151,7 @@ export interface Case {
   result?: string;
   created_at: string;
   updated_at: string;
+  material_list?: ServiceItemMaterial[];
 }
 
 export interface CaseMaterial {
@@ -240,6 +254,17 @@ export const AppointmentStatusText: Record<AppointmentStatus, string> = {
   cancelled: '已取消',
   completed: '已完成',
 };
+
+export interface OperationLog {
+  id: string;
+  user_id?: string;
+  user_name?: string;
+  action: string;
+  module?: string;
+  detail?: string;
+  ip?: string;
+  created_at: string;
+}
 
 export const RoleText: Record<UserRole, string> = {
   admin: '系统管理员',

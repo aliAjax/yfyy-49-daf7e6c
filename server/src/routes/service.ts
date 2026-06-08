@@ -69,11 +69,19 @@ router.get('/service-items/:id', (req: AuthRequest, res) => {
     LEFT JOIN departments d ON si.department_id = d.id
     LEFT JOIN windows w ON si.window_id = w.id
     WHERE si.id = ?
-  `).get(id);
+  `).get(id) as any;
 
   if (!item) {
     return res.status(404).json({ message: '服务事项不存在' });
   }
+
+  const materialList = db.prepare(`
+    SELECT * FROM service_item_materials 
+    WHERE service_item_id = ? 
+    ORDER BY sort_order ASC, created_at ASC
+  `).all(id);
+
+  item.material_list = materialList.length > 0 ? materialList : null;
 
   res.json({ item });
 });
@@ -99,6 +107,12 @@ router.post('/service-items', requireRoles('admin'), (req: AuthRequest, res) => 
        processing_time || null, fee || null, sort_order);
 
   const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '新增事项', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `新增事项：${name}（${code}）`);
+
   res.status(201).json({ item });
 });
 
@@ -112,6 +126,11 @@ router.put('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) 
     return res.status(400).json({ message: '事项编码已存在' });
   }
 
+  const oldItem = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id) as any;
+  if (!oldItem) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
   db.prepare(`
     UPDATE service_items SET name = ?, code = ?, department_id = ?, window_id = ?, description = ?, 
       materials = ?, processing_time = ?, fee = ?, status = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
@@ -120,15 +139,167 @@ router.put('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) 
        processing_time || null, fee || null, status || 'active', sort_order || 0, id);
 
   const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '编辑事项', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `编辑事项：${oldItem.name}（${oldItem.code}）`);
+
   res.json({ item });
 });
 
 // 删除服务事项
 router.delete('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
+  
+  const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id) as any;
+  if (!item) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
   db.prepare('DELETE FROM service_items WHERE id = ?').run(id);
   db.prepare('DELETE FROM number_sources WHERE service_item_id = ?').run(id);
+  db.prepare('DELETE FROM service_item_materials WHERE service_item_id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '删除事项', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `删除事项：${item.name}（${item.code}）`);
+
   res.json({ message: '删除成功' });
+});
+
+// 获取服务事项材料清单
+router.get('/service-items/:id/materials', (req: AuthRequest, res) => {
+  const { id } = req.params;
+
+  const serviceItem = db.prepare('SELECT id FROM service_items WHERE id = ?').get(id);
+  if (!serviceItem) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
+  const materials = db.prepare(`
+    SELECT * FROM service_item_materials 
+    WHERE service_item_id = ? 
+    ORDER BY sort_order ASC, created_at ASC
+  `).all(id);
+
+  res.json({ materials });
+});
+
+// 新增服务事项材料
+router.post('/service-items/:id/materials', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { name, is_required = 1, description, example, sort_order = 0 } = req.body;
+
+  if (!name) {
+    return res.status(400).json({ message: '请填写材料名称' });
+  }
+
+  const serviceItem = db.prepare('SELECT id, name FROM service_items WHERE id = ?').get(id) as any;
+  if (!serviceItem) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
+  const materialId = uuidv4();
+  db.prepare(`
+    INSERT INTO service_item_materials (id, service_item_id, name, is_required, description, example, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(materialId, id, name, is_required ? 1 : 0, description || null, example || null, sort_order);
+
+  const material = db.prepare('SELECT * FROM service_item_materials WHERE id = ?').get(materialId);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '新增材料', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `为事项【${serviceItem.name}】新增材料：${name}`);
+
+  res.status(201).json({ material });
+});
+
+// 更新服务事项材料
+router.put('/service-item-materials/:id', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { name, is_required, description, example, sort_order } = req.body;
+
+  const oldMaterial = db.prepare('SELECT * FROM service_item_materials WHERE id = ?').get(id) as any;
+  if (!oldMaterial) {
+    return res.status(404).json({ message: '材料不存在' });
+  }
+
+  db.prepare(`
+    UPDATE service_item_materials SET 
+      name = ?, is_required = ?, description = ?, example = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    name !== undefined ? name : oldMaterial.name,
+    is_required !== undefined ? (is_required ? 1 : 0) : oldMaterial.is_required,
+    description !== undefined ? description : oldMaterial.description,
+    example !== undefined ? example : oldMaterial.example,
+    sort_order !== undefined ? sort_order : oldMaterial.sort_order,
+    id
+  );
+
+  const material = db.prepare('SELECT * FROM service_item_materials WHERE id = ?').get(id);
+
+  const serviceItem = db.prepare('SELECT name FROM service_items WHERE id = ?').get(oldMaterial.service_item_id) as any;
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '编辑材料', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `编辑事项【${serviceItem?.name}】的材料：${oldMaterial.name}`);
+
+  res.json({ material });
+});
+
+// 删除服务事项材料
+router.delete('/service-item-materials/:id', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+
+  const material = db.prepare('SELECT * FROM service_item_materials WHERE id = ?').get(id) as any;
+  if (!material) {
+    return res.status(404).json({ message: '材料不存在' });
+  }
+
+  db.prepare('DELETE FROM service_item_materials WHERE id = ?').run(id);
+
+  const serviceItem = db.prepare('SELECT name FROM service_items WHERE id = ?').get(material.service_item_id) as any;
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '删除材料', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `删除事项【${serviceItem?.name}】的材料：${material.name}`);
+
+  res.json({ message: '删除成功' });
+});
+
+// 批量更新材料排序
+router.post('/service-items/:id/materials/sort', requireRoles('admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { materials } = req.body;
+
+  if (!Array.isArray(materials)) {
+    return res.status(400).json({ message: '参数错误' });
+  }
+
+  const serviceItem = db.prepare('SELECT name FROM service_items WHERE id = ?').get(id) as any;
+  if (!serviceItem) {
+    return res.status(404).json({ message: '服务事项不存在' });
+  }
+
+  const stmt = db.prepare('UPDATE service_item_materials SET sort_order = ? WHERE id = ?');
+  const updateMany = db.transaction((items: any[]) => {
+    for (const item of items) {
+      stmt.run(item.sort_order, item.id);
+    }
+  });
+
+  updateMany(materials.map((m: any) => ({ id: m.id, sort_order: m.sort_order })));
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '排序材料', '事项管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `调整事项【${serviceItem.name}】的材料排序`);
+
+  res.json({ message: '排序成功' });
 });
 
 // 号源管理 - 获取某天的号源
@@ -165,6 +336,11 @@ router.post('/number-sources/generate', requireRoles('admin'), (req: AuthRequest
     return res.status(400).json({ message: '请填写完整信息' });
   }
 
+  const serviceItem = db.prepare('SELECT * FROM service_items WHERE id = ?').get(service_item_id) as any;
+  if (!serviceItem) {
+    return res.status(400).json({ message: '服务事项不存在' });
+  }
+
   const start = dayjs(start_date);
   const end = dayjs(end_date);
   
@@ -191,6 +367,11 @@ router.post('/number-sources/generate', requireRoles('admin'), (req: AuthRequest
     }
   }
 
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '生成号源', '号源管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `生成号源：${serviceItem.name}，${start_date} 至 ${end_date}，共 ${generated} 天，每日 ${total_count} 个`);
+
   res.json({ message: `成功生成 ${generated} 天的号源`, generated });
 });
 
@@ -214,6 +395,12 @@ router.put('/number-sources/:id', requireRoles('admin'), (req: AuthRequest, res)
   `).run(total_count, time_slots || null, id);
 
   const updated = db.prepare('SELECT * FROM number_sources WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '更新号源', '号源管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `更新号源：日期 ${source.date}，总号源数 ${total_count}`);
+
   res.json({ source: updated });
 });
 

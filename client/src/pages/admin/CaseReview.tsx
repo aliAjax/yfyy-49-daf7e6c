@@ -1,10 +1,11 @@
-import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic } from 'antd';
+import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List } from 'antd';
 import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import api from '../../api';
-import type { Case, Department, CaseMaterial, CaseFlow } from '../../types';
+import type { Case, Department, CaseMaterial, CaseFlow, ServiceItemMaterial } from '../../types';
 import { CaseStatusText } from '../../types';
+import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 
 const { TextArea } = AntInput;
 
@@ -85,6 +86,9 @@ function CaseReview() {
     setDetailLoading(true);
     try {
       const res: any = await api.get(`/cases/${caseItem.id}`);
+      if (res.case) {
+        setCurrentCase(res.case);
+      }
       setCaseMaterials(res.materials || []);
       setCaseFlows(res.flows || []);
     } catch (error) {
@@ -349,9 +353,50 @@ function CaseReview() {
               </Descriptions.Item>
             </Descriptions>
 
+            {currentCase && hasCaseMaterials(currentCase) && (
+              <div style={{ marginBottom: 16 }}>
+                <h4 style={{ marginBottom: 8 }}>所需材料</h4>
+                <List
+                  size="small"
+                  dataSource={getCaseMaterialList(currentCase)}
+                  renderItem={(item: ServiceItemMaterial) => (
+                    <List.Item key={item.id}>
+                      <List.Item.Meta
+                        avatar={
+                          item.is_required ? (
+                            <Tag color="red" style={{ margin: 0 }}>
+                              必填
+                            </Tag>
+                          ) : (
+                            <Tag color="default" style={{ margin: 0 }}>
+                              选填
+                            </Tag>
+                          )
+                        }
+                        title={item.name}
+                        description={
+                          <div style={{ fontSize: 12 }}>
+                            {item.description && (
+                              <div style={{ marginBottom: 2 }}>{item.description}</div>
+                            )}
+                            {item.example && (
+                              <div style={{ color: '#999' }}>
+                                <span style={{ color: '#1890ff' }}>示例：</span>
+                                {item.example}
+                              </div>
+                            )}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+
             {caseMaterials.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>材料清单</h4>
+                <h4 style={{ marginBottom: 8 }}>已提交材料</h4>
                 <Table
                   size="small"
                   dataSource={caseMaterials}

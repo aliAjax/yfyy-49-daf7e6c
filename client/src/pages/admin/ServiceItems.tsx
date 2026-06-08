@@ -1,8 +1,8 @@
-import { Card, Table, Button, Input, Select, Modal, Form, InputNumber, Switch, message, Popconfirm, Space, Tag } from 'antd';
-import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Input, Select, Modal, Form, InputNumber, Switch, message, Popconfirm, Space, Tag, List } from 'antd';
+import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, UpOutlined, DownOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import api from '../../api';
-import type { ServiceItem, Department, Window } from '../../types';
+import type { ServiceItem, Department, Window, ServiceItemMaterial } from '../../types';
 
 function ServiceItems() {
   const [loading, setLoading] = useState(false);
@@ -16,6 +16,15 @@ function ServiceItems() {
   const [editingItem, setEditingItem] = useState<ServiceItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
+
+  const [materialModalVisible, setMaterialModalVisible] = useState(false);
+  const [currentServiceItem, setCurrentServiceItem] = useState<ServiceItem | null>(null);
+  const [materials, setMaterials] = useState<ServiceItemMaterial[]>([]);
+  const [materialLoading, setMaterialLoading] = useState(false);
+  const [materialFormVisible, setMaterialFormVisible] = useState(false);
+  const [editingMaterial, setEditingMaterial] = useState<ServiceItemMaterial | null>(null);
+  const [materialForm] = Form.useForm();
+  const [materialSubmitting, setMaterialSubmitting] = useState(false);
 
   useEffect(() => {
     loadItems();
@@ -86,6 +95,106 @@ function ServiceItems() {
       loadItems();
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const openMaterialConfig = async (item: ServiceItem) => {
+    setCurrentServiceItem(item);
+    setMaterialModalVisible(true);
+    await loadMaterials(item.id);
+  };
+
+  const loadMaterials = async (serviceItemId: string) => {
+    setMaterialLoading(true);
+    try {
+      const res: any = await api.get(`/service/service-items/${serviceItemId}/materials`);
+      setMaterials(res.materials || []);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setMaterialLoading(false);
+    }
+  };
+
+  const handleAddMaterial = () => {
+    setEditingMaterial(null);
+    materialForm.resetFields();
+    materialForm.setFieldsValue({ is_required: true, sort_order: materials.length });
+    setMaterialFormVisible(true);
+  };
+
+  const handleEditMaterial = (material: ServiceItemMaterial) => {
+    setEditingMaterial(material);
+    materialForm.setFieldsValue({
+      name: material.name,
+      is_required: !!material.is_required,
+      description: material.description,
+      example: material.example,
+      sort_order: material.sort_order,
+    });
+    setMaterialFormVisible(true);
+  };
+
+  const handleSaveMaterial = async () => {
+    try {
+      const values = await materialForm.validateFields();
+      setMaterialSubmitting(true);
+
+      if (editingMaterial) {
+        await api.put(`/service/service-item-materials/${editingMaterial.id}`, {
+          ...values,
+          is_required: values.is_required ? 1 : 0,
+        });
+        message.success('编辑成功');
+      } else {
+        await api.post(`/service/service-items/${currentServiceItem?.id}/materials`, {
+          ...values,
+          is_required: values.is_required ? 1 : 0,
+        });
+        message.success('新增成功');
+      }
+
+      setMaterialFormVisible(false);
+      if (currentServiceItem) {
+        await loadMaterials(currentServiceItem.id);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setMaterialSubmitting(false);
+    }
+  };
+
+  const handleDeleteMaterial = async (id: string) => {
+    try {
+      await api.delete(`/service/service-item-materials/${id}`);
+      message.success('删除成功');
+      if (currentServiceItem) {
+        await loadMaterials(currentServiceItem.id);
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const moveMaterial = async (index: number, direction: 'up' | 'down') => {
+    const newMaterials = [...materials];
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    
+    if (targetIndex < 0 || targetIndex >= newMaterials.length) return;
+
+    [newMaterials[index], newMaterials[targetIndex]] = [newMaterials[targetIndex], newMaterials[index]];
+    
+    const updatedMaterials = newMaterials.map((m, i) => ({ ...m, sort_order: i }));
+    setMaterials(updatedMaterials);
+
+    try {
+      await api.post(`/service/service-items/${currentServiceItem?.id}/materials/sort`, {
+        materials: updatedMaterials.map((m) => ({ id: m.id, sort_order: m.sort_order })),
+      });
+    } catch (error) {
+      console.error(error);
+      setMaterials(materials);
     }
   };
 
@@ -166,9 +275,12 @@ function ServiceItems() {
     {
       title: '操作',
       key: 'action',
-      width: 200,
+      width: 260,
       render: (_: any, record: ServiceItem) => (
         <Space size="small">
+          <Button type="link" size="small" icon={<FileTextOutlined />} onClick={() => openMaterialConfig(record)}>
+            材料配置
+          </Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)}>
             编辑
           </Button>
@@ -303,8 +415,12 @@ function ServiceItems() {
           <Form.Item name="description" label="事项描述">
             <Input.TextArea rows={3} placeholder="请输入事项描述" />
           </Form.Item>
-          <Form.Item name="materials" label="所需材料">
-            <Input.TextArea rows={2} placeholder="请输入所需材料（JSON格式）" />
+          <Form.Item
+            name="materials"
+            label="所需材料（旧格式）"
+            help="推荐使用列表操作列的「材料配置」功能维护结构化材料清单，本字段仅用于兼容旧数据"
+          >
+            <Input.TextArea rows={2} placeholder="请输入所需材料（JSON格式，兼容旧数据）" />
           </Form.Item>
           <div style={{ display: 'flex', gap: 16 }}>
             <Form.Item name="processing_time" label="办理时限（工作日）" style={{ flex: 1 }}>
@@ -327,6 +443,142 @@ function ServiceItems() {
               />
             </Form.Item>
           </div>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={`材料清单配置 - ${currentServiceItem?.name}`}
+        open={materialModalVisible}
+        onCancel={() => setMaterialModalVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setMaterialModalVisible(false)}>
+            关闭
+          </Button>,
+        ]}
+        width={700}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddMaterial}>
+            新增材料
+          </Button>
+        </div>
+        <List
+          loading={materialLoading}
+          dataSource={materials}
+          locale={{ emptyText: '暂无材料，请点击上方按钮添加' }}
+          renderItem={(item, index) => (
+            <List.Item
+              key={item.id}
+              actions={[
+                <Button
+                  key="up"
+                  type="text"
+                  size="small"
+                  icon={<UpOutlined />}
+                  disabled={index === 0}
+                  onClick={() => moveMaterial(index, 'up')}
+                >
+                  上移
+                </Button>,
+                <Button
+                  key="down"
+                  type="text"
+                  size="small"
+                  icon={<DownOutlined />}
+                  disabled={index === materials.length - 1}
+                  onClick={() => moveMaterial(index, 'down')}
+                >
+                  下移
+                </Button>,
+                <Button key="edit" type="text" size="small" onClick={() => handleEditMaterial(item)}>
+                  编辑
+                </Button>,
+                <Popconfirm
+                  key="delete"
+                  title="确定删除该材料吗？"
+                  onConfirm={() => handleDeleteMaterial(item.id)}
+                  okText="确定"
+                  cancelText="取消"
+                >
+                  <Button type="text" size="small" danger>
+                    删除
+                  </Button>
+                </Popconfirm>,
+              ]}
+            >
+              <List.Item.Meta
+                title={
+                  <span>
+                    {item.name}
+                    {item.is_required ? (
+                      <Tag color="red" style={{ marginLeft: 8 }}>必填</Tag>
+                    ) : (
+                      <Tag color="default" style={{ marginLeft: 8 }}>选填</Tag>
+                    )}
+                  </span>
+                }
+                description={
+                  <div>
+                    {item.description && (
+                      <div style={{ marginBottom: 4 }}>
+                        <span style={{ color: '#666' }}>说明：</span>
+                        {item.description}
+                      </div>
+                    )}
+                    {item.example && (
+                      <div>
+                        <span style={{ color: '#666' }}>示例：</span>
+                        {item.example}
+                      </div>
+                    )}
+                  </div>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      </Modal>
+
+      <Modal
+        title={editingMaterial ? '编辑材料' : '新增材料'}
+        open={materialFormVisible}
+        onCancel={() => setMaterialFormVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setMaterialFormVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" loading={materialSubmitting} onClick={handleSaveMaterial}>
+            确定
+          </Button>,
+        ]}
+        width={500}
+        destroyOnClose
+      >
+        <Form form={materialForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="材料名称"
+            rules={[{ required: true, message: '请输入材料名称' }]}
+          >
+            <Input placeholder="请输入材料名称" />
+          </Form.Item>
+          <Form.Item
+            name="is_required"
+            label="是否必交"
+            valuePropName="checked"
+          >
+            <Switch checkedChildren="是" unCheckedChildren="否" />
+          </Form.Item>
+          <Form.Item name="description" label="材料说明">
+            <Input.TextArea rows={2} placeholder="请输入材料说明" />
+          </Form.Item>
+          <Form.Item name="example" label="示例说明">
+            <Input.TextArea rows={2} placeholder="请输入示例说明" />
+          </Form.Item>
+          <Form.Item name="sort_order" label="排序">
+            <InputNumber min={0} style={{ width: '100%' }} placeholder="请输入排序值，数字越小越靠前" />
+          </Form.Item>
         </Form>
       </Modal>
     </div>

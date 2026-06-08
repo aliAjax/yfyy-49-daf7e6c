@@ -221,6 +221,19 @@ export function initDatabase() {
       ip TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS service_item_materials (
+      id TEXT PRIMARY KEY,
+      service_item_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      is_required INTEGER NOT NULL DEFAULT 1,
+      description TEXT,
+      example TEXT,
+      sort_order INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (service_item_id) REFERENCES service_items(id) ON DELETE CASCADE
+    );
   `);
 
   console.log('数据库初始化完成');

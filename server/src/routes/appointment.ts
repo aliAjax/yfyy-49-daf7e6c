@@ -220,6 +220,11 @@ router.post('/:id/cancel', (req: AuthRequest, res) => {
 
   tx();
 
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '取消预约', '预约', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `取消预约：${appointment.applicant_name}，日期：${appointment.appointment_date}`);
+
   res.json({ message: '预约已取消' });
 });
 

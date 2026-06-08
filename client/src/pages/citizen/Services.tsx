@@ -1,8 +1,9 @@
-import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin } from 'antd';
-import { SearchOutlined, CalendarOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin, Tag, Descriptions, Space, List } from 'antd';
+import { SearchOutlined, CalendarOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import api from '../../api';
-import type { ServiceItem } from '../../types';
+import type { ServiceItem, ServiceItemMaterial } from '../../types';
+import { getServiceItemMaterialList, hasServiceItemMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
 
 function CitizenServices() {
@@ -13,9 +14,14 @@ function CitizenServices() {
   const [departments, setDepartments] = useState<any[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [modalLoading, setModalLoading] = useState(false);
   const [form] = Form.useForm();
   const [availableDates, setAvailableDates] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
+
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [detailService, setDetailService] = useState<ServiceItem | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   useEffect(() => {
     loadServices();
@@ -56,14 +62,23 @@ function CitizenServices() {
     setSelectedService(service);
     setModalVisible(true);
     form.resetFields();
-    
+    setModalLoading(true);
+
     try {
-      const res: any = await api.get('/service/available-dates', {
-        params: { service_item_id: service.id },
-      });
-      setAvailableDates(res.dates || []);
+      const [detailRes, datesRes]: any = await Promise.all([
+        api.get(`/service/service-items/${service.id}`),
+        api.get('/service/available-dates', {
+          params: { service_item_id: service.id },
+        }),
+      ]);
+      if (detailRes.item) {
+        setSelectedService(detailRes.item);
+      }
+      setAvailableDates(datesRes.dates || []);
     } catch (error) {
       console.error(error);
+    } finally {
+      setModalLoading(false);
     }
   };
 
@@ -98,11 +113,17 @@ function CitizenServices() {
     return !available || available.booked_count >= available.total_count;
   };
 
-  const parseMaterials = (materials: string) => {
+  const handleViewDetail = async (service: ServiceItem) => {
+    setDetailVisible(true);
+    setDetailLoading(true);
     try {
-      return JSON.parse(materials);
-    } catch {
-      return [];
+      const res: any = await api.get(`/service/service-items/${service.id}`);
+      setDetailService(res.item);
+    } catch (error) {
+      console.error(error);
+      setDetailService(service);
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -160,14 +181,23 @@ function CitizenServices() {
                   <br />
                   <span>费用：{item.fee ? `¥${item.fee}` : '免费'}</span>
                 </div>
-                <Button
-                  type="primary"
-                  block
-                  icon={<CalendarOutlined />}
-                  onClick={() => handleAppointment(item)}
-                >
-                  立即预约
-                </Button>
+                <Space style={{ width: '100%' }}>
+                  <Button
+                    style={{ flex: 1 }}
+                    icon={<InfoCircleOutlined />}
+                    onClick={() => handleViewDetail(item)}
+                  >
+                    查看详情
+                  </Button>
+                  <Button
+                    type="primary"
+                    style={{ flex: 1 }}
+                    icon={<CalendarOutlined />}
+                    onClick={() => handleAppointment(item)}
+                  >
+                    立即预约
+                  </Button>
+                </Space>
               </Card>
             </Col>
           ))}
@@ -217,19 +247,144 @@ function CitizenServices() {
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={3} placeholder="可选，填写备注信息" />
           </Form.Item>
-          {selectedService?.materials && (
-            <div style={{ background: '#f5f5f5', padding: 12, borderRadius: 6 }}>
-              <div style={{ fontWeight: 500, marginBottom: 8 }}>所需材料：</div>
-              <ul style={{ margin: 0, paddingLeft: 20 }}>
-                {parseMaterials(selectedService.materials).map((m: any, index: number) => (
-                  <li key={index} style={{ marginBottom: 4 }}>
-                    {m.name} {m.required && <span style={{ color: '#ff4d4f' }}>*</span>}
-                  </li>
-                ))}
-              </ul>
+          {selectedService && hasServiceItemMaterials(selectedService) && (
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 6 }}>
+              <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                <span>所需材料</span>
+                <Tag color="blue" style={{ marginLeft: 8 }}>
+                  共 {getServiceItemMaterialList(selectedService).length} 项
+                </Tag>
+              </div>
+              <Spin spinning={modalLoading}>
+                <List
+                  size="small"
+                  dataSource={getServiceItemMaterialList(selectedService)}
+                  renderItem={(item) => (
+                    <List.Item key={item.id}>
+                  <List.Item.Meta
+                    title={
+                      <span>
+                        {item.is_required ? (
+                          <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>
+                        ) : null}
+                        {item.name}
+                      </span>
+                    }
+                    description={
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        {item.description && <div>{item.description}</div>}
+                        {item.example && (
+                          <div style={{ marginTop: 4, color: '#999' }}>
+                            示例：{item.example}
+                          </div>
+                        )}
+                      </div>
+                    }
+                  />
+                </List.Item>
+                  )}
+                />
+              </Spin>
             </div>
           )}
         </Form>
+      </Modal>
+
+      <Modal
+        title="服务事项详情"
+        open={detailVisible}
+        onCancel={() => setDetailVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setDetailVisible(false)}>
+            关闭
+          </Button>,
+          <Button
+            key="appointment"
+            type="primary"
+            icon={<CalendarOutlined />}
+            onClick={() => {
+              if (detailService) {
+                setDetailVisible(false);
+                handleAppointment(detailService);
+              }
+            }}
+          >
+            立即预约
+          </Button>,
+        ]}
+        width={600}
+        destroyOnClose
+      >
+        <Spin spinning={detailLoading}>
+          {detailService && (
+            <div>
+              <Descriptions column={1} bordered style={{ marginBottom: 16 }}>
+                <Descriptions.Item label="事项名称">{detailService.name}</Descriptions.Item>
+                <Descriptions.Item label="事项编码">{detailService.code}</Descriptions.Item>
+                <Descriptions.Item label="办理科室">{detailService.department_name}</Descriptions.Item>
+                <Descriptions.Item label="办理窗口">{detailService.window_name || '待定'}</Descriptions.Item>
+                <Descriptions.Item label="办理时限">
+                  {detailService.processing_time || '3'} 个工作日
+                </Descriptions.Item>
+                <Descriptions.Item label="费用">
+                  {detailService.fee ? `¥${detailService.fee}` : '免费'}
+                </Descriptions.Item>
+              </Descriptions>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 500, marginBottom: 8 }}>事项描述</div>
+                <div style={{ color: '#666', lineHeight: 1.6 }}>
+                  {detailService.description || '暂无描述'}
+                </div>
+              </div>
+
+              {detailService && hasServiceItemMaterials(detailService) && (
+                <div>
+                  <div style={{ fontWeight: 500, marginBottom: 12 }}>
+                  <span>所需材料</span>
+                  <Tag color="blue" style={{ marginLeft: 8 }}>
+                    共 {getServiceItemMaterialList(detailService).length} 项
+                  </Tag>
+                </div>
+                <List
+                  dataSource={getServiceItemMaterialList(detailService)}
+                  renderItem={(item) => (
+                    <List.Item key={item.id}>
+                      <List.Item.Meta
+                        avatar={
+                          item.is_required ? (
+                            <Tag color="red" style={{ margin: 0 }}>
+                              必填
+                            </Tag>
+                          ) : (
+                            <Tag color="default" style={{ margin: 0 }}>
+                              选填
+                            </Tag>
+                          )
+                        }
+                        title={item.name}
+                        description={
+                          <div style={{ fontSize: 13 }}>
+                            {item.description && (
+                              <div style={{ marginBottom: 4 }}>{item.description}</div>
+                            )}
+                            {item.example && (
+                              <div style={{ color: '#999', fontSize: 12 }}>
+                                <span style={{ color: '#1890ff' }}>示例：</span>
+                                {item.example}
+                              </div>
+                            )}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
+          </div>
+        )}
+        </Spin>
       </Modal>
     </div>
   );
