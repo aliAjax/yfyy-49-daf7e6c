@@ -66,6 +66,8 @@ export interface ServiceItem {
   fee?: number;
   status: string;
   sort_order: number;
+  is_favorite?: number;
+  favorited_at?: string;
   created_at: string;
   updated_at: string;
 }

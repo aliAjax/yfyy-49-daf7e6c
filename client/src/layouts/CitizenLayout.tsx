@@ -18,6 +18,7 @@ import CitizenCaseDetail from '../pages/citizen/CaseDetail';
 import CitizenEvaluations from '../pages/citizen/Evaluations';
 import CitizenProfile from '../pages/citizen/Profile';
 import CitizenNotifications from '../pages/citizen/Notifications';
+import CitizenFavorites from '../pages/citizen/Favorites';
 import { useEffect, useState } from 'react';
 import api from '../api';
 
@@ -50,6 +51,7 @@ function CitizenLayout() {
   const menuItems = [
     { key: '/citizen', icon: <HomeOutlined />, label: '首页' },
     { key: '/citizen/services', icon: <FileTextOutlined />, label: '服务事项' },
+    { key: '/citizen/favorites', icon: <StarOutlined />, label: '我的收藏' },
     { key: '/citizen/appointments', icon: <CalendarOutlined />, label: '我的预约' },
     { key: '/citizen/cases', icon: <FileTextOutlined />, label: '我的办件' },
     { key: '/citizen/evaluations', icon: <StarOutlined />, label: '我的评价' },
@@ -103,6 +105,7 @@ function CitizenLayout() {
             <Routes>
               <Route path="/" element={<CitizenHome />} />
               <Route path="/services" element={<CitizenServices />} />
+              <Route path="/favorites" element={<CitizenFavorites />} />
               <Route path="/appointments" element={<CitizenAppointments />} />
               <Route path="/cases" element={<CitizenCases />} />
               <Route path="/cases/:id" element={<CitizenCaseDetail />} />

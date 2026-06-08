@@ -1,11 +1,14 @@
-import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin } from 'antd';
-import { SearchOutlined, CalendarOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin, Space, Empty } from 'antd';
+import { SearchOutlined, CalendarOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import api from '../../api';
 import type { ServiceItem } from '../../types';
 import dayjs from 'dayjs';
+import { useFavoriteStore } from '../../store/favorites';
+import { useSearchParams } from 'react-router-dom';
 
 function CitizenServices() {
+  const [searchParams] = useSearchParams();
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -16,11 +19,24 @@ function CitizenServices() {
   const [form] = Form.useForm();
   const [availableDates, setAvailableDates] = useState<any[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const { favoriteIds, loadFavorites, setFavorite } = useFavoriteStore();
 
   useEffect(() => {
+    loadFavorites();
     loadServices();
     loadDepartments();
   }, []);
+
+  useEffect(() => {
+    const serviceItemId = searchParams.get('item');
+    if (!serviceItemId || services.length === 0 || modalVisible) {
+      return;
+    }
+    const service = services.find((item) => item.id === serviceItemId);
+    if (service) {
+      handleAppointment(service);
+    }
+  }, [searchParams, services, modalVisible]);
 
   const loadServices = async () => {
     setLoading(true);
@@ -53,7 +69,13 @@ function CitizenServices() {
   };
 
   const handleAppointment = async (service: ServiceItem) => {
-    setSelectedService(service);
+    try {
+      const res: any = await api.get(`/service/service-items/${service.id}`);
+      setSelectedService(res.item);
+    } catch (error) {
+      console.error(error);
+      setSelectedService(service);
+    }
     setModalVisible(true);
     form.resetFields();
     
@@ -65,6 +87,20 @@ function CitizenServices() {
     } catch (error) {
       console.error(error);
     }
+  };
+
+  const handleToggleFavorite = async (service: ServiceItem) => {
+    const nextFavorite = !isServiceFavorite(service);
+    await setFavorite(service.id, nextFavorite);
+    setServices((list) =>
+      list.map((item) =>
+        item.id === service.id ? { ...item, is_favorite: nextFavorite ? 1 : 0 } : item
+      )
+    );
+    if (selectedService?.id === service.id) {
+      setSelectedService({ ...selectedService, is_favorite: nextFavorite ? 1 : 0 });
+    }
+    message.success(nextFavorite ? '已收藏' : '已取消收藏');
   };
 
   const handleSubmitAppointment = async () => {
@@ -106,6 +142,9 @@ function CitizenServices() {
     }
   };
 
+  const isServiceFavorite = (service: ServiceItem) =>
+    favoriteIds.includes(service.id) || service.is_favorite === 1;
+
   return (
     <div>
       <Card style={{ marginBottom: 16 }}>
@@ -146,8 +185,21 @@ function CitizenServices() {
                 hoverable
                 className="service-card"
                 title={item.name}
-                extra={<span style={{ fontSize: 12, color: '#999' }}>{item.code}</span>}
+                extra={
+                  <Button
+                    type="text"
+                    icon={
+                      isServiceFavorite(item) ? (
+                        <StarFilled style={{ color: '#faad14' }} />
+                      ) : (
+                        <StarOutlined />
+                      )
+                    }
+                    onClick={() => handleToggleFavorite(item)}
+                  />
+                }
               >
+                <div style={{ fontSize: 12, color: '#999', marginBottom: 8 }}>{item.code}</div>
                 <div style={{ minHeight: 60, marginBottom: 12 }}>
                   <p style={{ color: '#666', fontSize: 13, lineHeight: 1.6 }}>
                     {item.description || '暂无描述'}
@@ -160,18 +212,30 @@ function CitizenServices() {
                   <br />
                   <span>费用：{item.fee ? `¥${item.fee}` : '免费'}</span>
                 </div>
-                <Button
-                  type="primary"
-                  block
-                  icon={<CalendarOutlined />}
-                  onClick={() => handleAppointment(item)}
-                >
-                  立即预约
-                </Button>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Button
+                    style={{ width: '42%' }}
+                    icon={isServiceFavorite(item) ? <StarFilled /> : <StarOutlined />}
+                    onClick={() => handleToggleFavorite(item)}
+                  >
+                    {isServiceFavorite(item) ? '取消收藏' : '收藏'}
+                  </Button>
+                  <Button
+                    type="primary"
+                    style={{ width: '58%' }}
+                    icon={<CalendarOutlined />}
+                    onClick={() => handleAppointment(item)}
+                  >
+                    立即预约
+                  </Button>
+                </Space.Compact>
               </Card>
             </Col>
           ))}
         </Row>
+        {services.length === 0 && (
+          <Empty description="暂无服务事项" style={{ padding: '48px 0' }} />
+        )}
       </Spin>
 
       <Modal
@@ -181,6 +245,13 @@ function CitizenServices() {
         footer={[
           <Button key="cancel" onClick={() => setModalVisible(false)}>
             取消
+          </Button>,
+          <Button
+            key="favorite"
+            icon={selectedService && isServiceFavorite(selectedService) ? <StarFilled /> : <StarOutlined />}
+            onClick={() => selectedService && handleToggleFavorite(selectedService)}
+          >
+            {selectedService && isServiceFavorite(selectedService) ? '取消收藏' : '收藏'}
           </Button>,
           <Button key="submit" type="primary" loading={submitting} onClick={handleSubmitAppointment}>
             提交预约

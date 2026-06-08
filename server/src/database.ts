@@ -71,6 +71,16 @@ export function initDatabase() {
       FOREIGN KEY (window_id) REFERENCES windows(id)
     );
 
+    CREATE TABLE IF NOT EXISTS service_favorites (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      service_item_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id),
+      FOREIGN KEY (service_item_id) REFERENCES service_items(id),
+      UNIQUE(user_id, service_item_id)
+    );
+
     CREATE TABLE IF NOT EXISTS number_sources (
       id TEXT PRIMARY KEY,
       service_item_id TEXT NOT NULL,

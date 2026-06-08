@@ -1,4 +1,4 @@
-import { Card, Row, Col, Statistic, Button, List, Tag, Space } from 'antd';
+import { Card, Row, Col, Statistic, Button, List, Tag, Space, Empty } from 'antd';
 import {
   FileTextOutlined,
   CalendarOutlined,
@@ -9,29 +9,26 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../../api';
-import type { ServiceItem } from '../../types';
 import { CaseStatusText } from '../../types';
 import dayjs from 'dayjs';
+import { useFavoriteStore } from '../../store/favorites';
 
 function CitizenHome() {
   const navigate = useNavigate();
   const [stats, setStats] = useState<any>({});
   const [recentCases, setRecentCases] = useState<any[]>([]);
-  const [hotServices, setHotServices] = useState<ServiceItem[]>([]);
+  const { favoriteServices, loadFavorites } = useFavoriteStore();
 
   useEffect(() => {
     loadData();
+    loadFavorites();
   }, []);
 
   const loadData = async () => {
     try {
-      const [casesRes, servicesRes]: any = await Promise.all([
-        api.get('/cases/my?pageSize=5'),
-        api.get('/service/service-items/all'),
-      ]);
+      const casesRes: any = await api.get('/cases/my?pageSize=5');
       
       setRecentCases(casesRes.cases || []);
-      setHotServices((servicesRes.items || []).slice(0, 6));
 
       const allCases = casesRes.cases || [];
       setStats({
@@ -112,30 +109,41 @@ function CitizenHome() {
       <Row gutter={16}>
         <Col span={16}>
           <Card
-            title="热门服务"
+            title="常用服务"
             extra={
-              <Button type="link" onClick={() => navigate('/citizen/services')}>
+              <Button type="link" onClick={() => navigate('/citizen/favorites')}>
                 查看全部 <RightOutlined />
               </Button>
             }
           >
-            <Row gutter={[16, 16]}>
-              {hotServices.map((item) => (
-                <Col span={8} key={item.id}>
-                  <Card
-                    hoverable
-                    className="service-card"
-                    onClick={() => navigate(`/citizen/services?item=${item.id}`)}
-                  >
-                    <div style={{ textAlign: 'center', padding: '12px 0' }}>
-                      <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
-                      <div style={{ fontWeight: 500, marginBottom: 4 }}>{item.name}</div>
-                      <div style={{ fontSize: 12, color: '#999' }}>{item.department_name}</div>
-                    </div>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
+            {favoriteServices.length > 0 ? (
+              <Row gutter={[16, 16]}>
+                {favoriteServices.slice(0, 6).map((item) => (
+                  <Col span={8} key={item.id}>
+                    <Card
+                      hoverable
+                      className="service-card"
+                      onClick={() => navigate(`/citizen/services?item=${item.id}`)}
+                    >
+                      <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                        <div style={{ fontSize: 32, marginBottom: 8 }}>📋</div>
+                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{item.name}</div>
+                        <div style={{ fontSize: 12, color: '#999' }}>{item.department_name}</div>
+                      </div>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            ) : (
+              <Empty
+                description="暂无常用服务"
+                style={{ padding: '24px 0' }}
+              >
+                <Button type="primary" onClick={() => navigate('/citizen/services')}>
+                  去收藏服务事项
+                </Button>
+              </Empty>
+            )}
           </Card>
         </Col>
         <Col span={8}>

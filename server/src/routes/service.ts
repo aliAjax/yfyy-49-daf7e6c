@@ -8,6 +8,13 @@ const router = Router();
 
 router.use(authMiddleware);
 
+const withFavoriteSelect = `
+  si.*,
+  d.name as department_name,
+  w.name as window_name,
+  CASE WHEN sf.id IS NULL THEN 0 ELSE 1 END as is_favorite
+`;
+
 // 服务事项列表
 router.get('/service-items', (req: AuthRequest, res) => {
   const { department_id, status, keyword, page = 1, pageSize = 20 } = req.query as any;
@@ -48,15 +55,64 @@ router.get('/service-items', (req: AuthRequest, res) => {
 // 所有启用的服务事项（群众端使用）
 router.get('/service-items/all', (req: AuthRequest, res) => {
   const items = db.prepare(`
-    SELECT si.*, d.name as department_name, w.name as window_name
+    SELECT ${withFavoriteSelect}
     FROM service_items si
     LEFT JOIN departments d ON si.department_id = d.id
     LEFT JOIN windows w ON si.window_id = w.id
+    LEFT JOIN service_favorites sf ON sf.service_item_id = si.id AND sf.user_id = ?
     WHERE si.status = 'active'
     ORDER BY si.sort_order ASC, si.created_at DESC
-  `).all();
+  `).all(req.user!.id);
 
   res.json({ items });
+});
+
+// 当前用户收藏的启用服务事项
+router.get('/favorites', requireRoles('citizen'), (req: AuthRequest, res) => {
+  const items = db.prepare(`
+    SELECT ${withFavoriteSelect}, sf.created_at as favorited_at
+    FROM service_favorites sf
+    INNER JOIN service_items si ON si.id = sf.service_item_id
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN windows w ON si.window_id = w.id
+    WHERE sf.user_id = ? AND si.status = 'active'
+    ORDER BY sf.created_at DESC
+  `).all(req.user!.id);
+
+  res.json({ items });
+});
+
+// 收藏启用的服务事项
+router.post('/favorites/:serviceItemId', requireRoles('citizen'), (req: AuthRequest, res) => {
+  const { serviceItemId } = req.params;
+  const item = db.prepare('SELECT id FROM service_items WHERE id = ? AND status = ?')
+    .get(serviceItemId, 'active') as any;
+
+  if (!item) {
+    return res.status(404).json({ message: '服务事项不存在或已停用，无法收藏' });
+  }
+
+  const existing = db.prepare(
+    'SELECT id FROM service_favorites WHERE user_id = ? AND service_item_id = ?'
+  ).get(req.user!.id, serviceItemId);
+
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO service_favorites (id, user_id, service_item_id)
+      VALUES (?, ?, ?)
+    `).run(uuidv4(), req.user!.id, serviceItemId);
+  }
+
+  res.json({ message: '收藏成功' });
+});
+
+// 取消收藏服务事项
+router.delete('/favorites/:serviceItemId', requireRoles('citizen'), (req: AuthRequest, res) => {
+  const { serviceItemId } = req.params;
+  db.prepare('DELETE FROM service_favorites WHERE user_id = ? AND service_item_id = ?')
+    .run(req.user!.id, serviceItemId);
+
+  res.json({ message: '已取消收藏' });
 });
 
 // 服务事项详情
@@ -64,12 +120,13 @@ router.get('/service-items/:id', (req: AuthRequest, res) => {
   const { id } = req.params;
   
   const item = db.prepare(`
-    SELECT si.*, d.name as department_name, w.name as window_name
+    SELECT ${withFavoriteSelect}
     FROM service_items si
     LEFT JOIN departments d ON si.department_id = d.id
     LEFT JOIN windows w ON si.window_id = w.id
+    LEFT JOIN service_favorites sf ON sf.service_item_id = si.id AND sf.user_id = ?
     WHERE si.id = ?
-  `).get(id);
+  `).get(req.user!.id, id);
 
   if (!item) {
     return res.status(404).json({ message: '服务事项不存在' });
