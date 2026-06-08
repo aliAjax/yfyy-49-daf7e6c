@@ -99,6 +99,12 @@ router.post('/service-items', requireRoles('admin'), (req: AuthRequest, res) => 
        processing_time || null, fee || null, sort_order);
 
   const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '新增事项', '事项管理', ?)
+  `).run(req.user!.id, req.user!.name, `新增事项${name}（${code}）`);
+
   res.status(201).json({ item });
 });
 
@@ -120,14 +126,27 @@ router.put('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) 
        processing_time || null, fee || null, status || 'active', sort_order || 0, id);
 
   const item = db.prepare('SELECT * FROM service_items WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '编辑事项', '事项管理', ?)
+  `).run(req.user!.id, req.user!.name, `编辑事项${name}（${code}）`);
+
   res.json({ item });
 });
 
 // 删除服务事项
 router.delete('/service-items/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
+  const item = db.prepare('SELECT name, code FROM service_items WHERE id = ?').get(id) as any;
   db.prepare('DELETE FROM service_items WHERE id = ?').run(id);
   db.prepare('DELETE FROM number_sources WHERE service_item_id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '删除事项', '事项管理', ?)
+  `).run(req.user!.id, req.user!.name, item ? `删除事项${item.name}（${item.code}）` : `删除事项${id}`);
+
   res.json({ message: '删除成功' });
 });
 

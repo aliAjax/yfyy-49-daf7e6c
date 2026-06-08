@@ -213,6 +213,17 @@ export interface NumberSource {
   updated_at: string;
 }
 
+export interface OperationLog {
+  id: string;
+  user_id?: string;
+  user_name?: string;
+  action: string;
+  module?: string;
+  detail?: string;
+  ip?: string;
+  created_at: string;
+}
+
 export const CaseStatusText: Record<CaseStatus, string> = {
   draft: '草稿',
   submitted: '已提交',

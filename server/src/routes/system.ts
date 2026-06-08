@@ -121,6 +121,11 @@ router.post('/users', requireRoles('admin'), (req: AuthRequest, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
   delete user.password;
 
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '新增用户', '用户管理', ?)
+  `).run(req.user!.id, req.user!.name, `新增用户${name}（${username}）`);
+
   res.status(201).json({ user });
 });
 
@@ -136,6 +141,11 @@ router.put('/users/:id', requireRoles('admin'), (req: AuthRequest, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as any;
   delete user.password;
 
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '编辑用户', '用户管理', ?)
+  `).run(req.user!.id, req.user!.name, `编辑用户${user.name}（${user.username}）`);
+
   res.json({ user });
 });
 
@@ -146,7 +156,14 @@ router.delete('/users/:id', requireRoles('admin'), (req: AuthRequest, res) => {
     return res.status(400).json({ message: '不能删除自己的账号' });
   }
 
+  const user = db.prepare('SELECT username, name FROM users WHERE id = ?').get(id) as any;
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '删除用户', '用户管理', ?)
+  `).run(req.user!.id, req.user!.name, user ? `删除用户${user.name}（${user.username}）` : `删除用户${id}`);
+
   res.json({ message: '删除成功' });
 });
 

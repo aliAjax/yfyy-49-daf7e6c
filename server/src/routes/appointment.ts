@@ -220,6 +220,18 @@ router.post('/:id/cancel', (req: AuthRequest, res) => {
 
   tx();
 
+  const serviceItem = db.prepare('SELECT name FROM service_items WHERE id = ?')
+    .get(appointment.service_item_id) as any;
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '取消预约', '预约', ?)
+  `).run(
+    req.user!.id,
+    req.user!.name,
+    `取消预约${serviceItem?.name || appointment.service_item_id}，日期：${appointment.appointment_date}`
+  );
+
   res.json({ message: '预约已取消' });
 });
 

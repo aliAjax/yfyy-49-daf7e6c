@@ -110,6 +110,11 @@ router.post('/issue', requireRoles('window', 'admin'), (req: AuthRequest, res) =
       .run(appointment_id);
   }
 
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '现场取号', '叫号办理', ?)
+  `).run(req.user!.id, req.user!.name, `现场取号${ticketNumber}，事项：${serviceItem.name}`);
+
   res.status(201).json({ ticket });
 });
 
@@ -134,6 +139,12 @@ router.post('/:id/call', requireRoles('window', 'admin'), (req: AuthRequest, res
   `).run(window_id || null, id);
 
   const updated = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '呼叫号票', '叫号办理', ?)
+  `).run(req.user!.id, req.user!.name, `呼叫号票${ticket.ticket_number}`);
+
   res.json({ ticket: updated });
 });
 
@@ -155,6 +166,12 @@ router.post('/:id/start', requireRoles('window', 'admin'), (req: AuthRequest, re
     .run(id);
 
   const updated = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '开始办理', '叫号办理', ?)
+  `).run(req.user!.id, req.user!.name, `开始办理号票${ticket.ticket_number}`);
+
   res.json({ ticket: updated });
 });
 
@@ -176,6 +193,12 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
     .run(id);
 
   const updated = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '完成办理', '叫号办理', ?)
+  `).run(req.user!.id, req.user!.name, `完成办理号票${ticket.ticket_number}`);
+
   res.json({ ticket: updated });
 });
 
@@ -193,6 +216,12 @@ router.post('/:id/cancel', requireRoles('window', 'admin'), (req: AuthRequest, r
     .run(id);
 
   const updated = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '过号取消', '叫号办理', ?)
+  `).run(req.user!.id, req.user!.name, `过号取消号票${ticket.ticket_number}`);
+
   res.json({ ticket: updated });
 });
 

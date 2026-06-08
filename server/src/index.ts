@@ -11,6 +11,7 @@ import evaluationRoutes from './routes/evaluation';
 import statisticsRoutes from './routes/statistics';
 import dashboardRoutes from './routes/dashboard';
 import notificationRoutes from './routes/notification';
+import logsRoutes from './routes/logs';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,6 +36,7 @@ app.use('/api/evaluations', evaluationRoutes);
 app.use('/api/statistics', statisticsRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/logs', logsRoutes);
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('服务器错误:', err);
