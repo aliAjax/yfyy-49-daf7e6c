@@ -18,6 +18,7 @@ import dayjs from 'dayjs';
 import { useAuthStore } from '../../store/auth';
 import { useFavoriteStore } from '../../store/favorite';
 import { message } from 'antd';
+import FrequentlyUsedServices from '../../components/FrequentlyUsedServices';
 
 function CitizenHome() {
   const navigate = useNavigate();
@@ -29,24 +30,26 @@ function CitizenHome() {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [isAuthenticated]);
 
   const loadData = async () => {
     try {
-      const [casesRes, servicesRes]: any = await Promise.all([
+      const [casesRes, servicesRes, appointmentsRes]: any = await Promise.all([
         api.get('/cases/my?pageSize=5'),
         api.get('/service/service-items/all'),
+        isAuthenticated ? api.get('/appointments/my?pageSize=100') : Promise.resolve({ appointments: [] }),
       ]);
       
       setRecentCases(casesRes.cases || []);
       setHotServices((servicesRes.items || []).slice(0, 6));
 
       const allCases = casesRes.cases || [];
+      const allAppointments = appointmentsRes.appointments || [];
       setStats({
         total: allCases.length,
         processing: allCases.filter((c: any) => !['completed', 'rejected'].includes(c.status)).length,
         completed: allCases.filter((c: any) => c.status === 'completed').length,
-        appointments: 0,
+        appointments: allAppointments.filter((a: any) => a.status !== 'cancelled').length,
       });
     } catch (error) {
       console.error(error);
@@ -127,12 +130,14 @@ function CitizenHome() {
         </Col>
       </Row>
 
+      <FrequentlyUsedServices maxItems={6} />
+
       {isAuthenticated && (
         <Card
           title={
             <span>
               <StarFilled style={{ color: '#faad14', marginRight: 8 }} />
-              常用服务
+              我的收藏
             </span>
           }
           extra={

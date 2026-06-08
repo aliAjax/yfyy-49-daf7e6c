@@ -13,6 +13,28 @@ const db = new Database(dbPath) as any;
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+function migrateDatabase() {
+  const columns = db.prepare("PRAGMA table_info(case_materials)").all() as any[];
+  const columnNames = columns.map(c => c.name);
+  
+  const additions: { column: string; definition: string }[] = [
+    { column: 'correction_comment', definition: 'TEXT' },
+    { column: 'correction_file_url', definition: 'TEXT' },
+    { column: 'correction_count', definition: 'INTEGER DEFAULT 0' },
+    { column: 'last_corrected_at', definition: 'DATETIME' },
+    { column: 'last_correction_reviewed_at', definition: 'DATETIME' },
+    { column: 'service_item_material_id', definition: 'TEXT' },
+    { column: 'is_required', definition: 'INTEGER DEFAULT 1' },
+  ];
+
+  for (const { column, definition } of additions) {
+    if (!columnNames.includes(column)) {
+      db.prepare(`ALTER TABLE case_materials ADD COLUMN ${column} ${definition}`).run();
+      console.log(`  数据库迁移：添加 case_materials.${column} 字段`);
+    }
+  }
+}
+
 export function initDatabase() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS departments (
@@ -160,6 +182,13 @@ export function initDatabase() {
       review_comment TEXT,
       reviewed_by TEXT,
       reviewed_at DATETIME,
+      correction_comment TEXT,
+      correction_file_url TEXT,
+      correction_count INTEGER DEFAULT 0,
+      last_corrected_at DATETIME,
+      last_correction_reviewed_at DATETIME,
+      service_item_material_id TEXT,
+      is_required INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (case_id) REFERENCES cases(id)
@@ -245,6 +274,8 @@ export function initDatabase() {
       UNIQUE(user_id, service_item_id)
     );
   `);
+
+  migrateDatabase();
 
   console.log('数据库初始化完成');
 }

@@ -1,12 +1,13 @@
-import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin, Tag, Descriptions, Space, List, Popconfirm } from 'antd';
+import { Card, Row, Col, Input, Select, Button, Modal, message, Spin, Tag, Descriptions, List } from 'antd';
 import { SearchOutlined, CalendarOutlined, InfoCircleOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import api from '../../api';
-import type { ServiceItem, ServiceItemMaterial } from '../../types';
+import type { ServiceItem } from '../../types';
 import { getServiceItemMaterialList, hasServiceItemMaterials } from '../../utils/materials';
-import dayjs from 'dayjs';
 import { useAuthStore } from '../../store/auth';
 import { useFavoriteStore } from '../../store/favorite';
+import FrequentlyUsedServices from '../../components/FrequentlyUsedServices';
+import AppointmentModal from '../../components/AppointmentModal';
 
 function CitizenServices() {
   const { isAuthenticated } = useAuthStore();
@@ -17,11 +18,7 @@ function CitizenServices() {
   const [departmentId, setDepartmentId] = useState<string | undefined>();
   const [departments, setDepartments] = useState<any[]>([]);
   const [selectedService, setSelectedService] = useState<ServiceItem | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [modalLoading, setModalLoading] = useState(false);
-  const [form] = Form.useForm();
-  const [availableDates, setAvailableDates] = useState<any[]>([]);
-  const [submitting, setSubmitting] = useState(false);
+  const [appointmentModalVisible, setAppointmentModalVisible] = useState(false);
 
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailService, setDetailService] = useState<ServiceItem | null>(null);
@@ -92,59 +89,9 @@ function CitizenServices() {
     }
   };
 
-  const handleAppointment = async (service: ServiceItem) => {
+  const handleAppointment = (service: ServiceItem) => {
     setSelectedService(service);
-    setModalVisible(true);
-    form.resetFields();
-    setModalLoading(true);
-
-    try {
-      const [detailRes, datesRes]: any = await Promise.all([
-        api.get(`/service/service-items/${service.id}`),
-        api.get('/service/available-dates', {
-          params: { service_item_id: service.id },
-        }),
-      ]);
-      if (detailRes.item) {
-        setSelectedService(detailRes.item);
-      }
-      setAvailableDates(datesRes.dates || []);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setModalLoading(false);
-    }
-  };
-
-  const handleSubmitAppointment = async () => {
-    try {
-      const values = await form.validateFields();
-      setSubmitting(true);
-      
-      await api.post('/appointments', {
-        service_item_id: selectedService?.id,
-        appointment_date: dayjs(values.date).format('YYYY-MM-DD'),
-        time_slot: values.time_slot,
-        applicant_name: values.applicant_name,
-        applicant_phone: values.applicant_phone,
-        remark: values.remark,
-      });
-
-      message.success('预约成功');
-      setModalVisible(false);
-      form.resetFields();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const disabledDate = (current: any) => {
-    if (!current) return false;
-    const dateStr = current.format('YYYY-MM-DD');
-    const available = availableDates.find((d: any) => d.date === dateStr);
-    return !available || available.booked_count >= available.total_count;
+    setAppointmentModalVisible(true);
   };
 
   const handleViewDetail = async (service: ServiceItem) => {
@@ -163,6 +110,8 @@ function CitizenServices() {
 
   return (
     <div>
+      <FrequentlyUsedServices maxItems={6} showViewAll={false} />
+
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={16} align="middle">
           <Col span={8}>
@@ -247,91 +196,11 @@ function CitizenServices() {
         </Row>
       </Spin>
 
-      <Modal
-        title={`预约 - ${selectedService?.name}`}
-        open={modalVisible}
-        onCancel={() => setModalVisible(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setModalVisible(false)}>
-            取消
-          </Button>,
-          <Button key="submit" type="primary" loading={submitting} onClick={handleSubmitAppointment}>
-            提交预约
-          </Button>,
-        ]}
-        width={500}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="date"
-            label="预约日期"
-            rules={[{ required: true, message: '请选择预约日期' }]}
-          >
-            <DatePicker
-              style={{ width: '100%' }}
-              disabledDate={disabledDate}
-              placeholder="选择预约日期"
-            />
-          </Form.Item>
-          <Form.Item
-            name="applicant_name"
-            label="申请人姓名"
-            rules={[{ required: true, message: '请输入申请人姓名' }]}
-          >
-            <Input placeholder="请输入申请人姓名" />
-          </Form.Item>
-          <Form.Item
-            name="applicant_phone"
-            label="联系电话"
-            rules={[{ required: true, message: '请输入联系电话' }]}
-          >
-            <Input placeholder="请输入联系电话" />
-          </Form.Item>
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={3} placeholder="可选，填写备注信息" />
-          </Form.Item>
-          {selectedService && hasServiceItemMaterials(selectedService) && (
-            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 6 }}>
-              <div style={{ fontWeight: 500, marginBottom: 12 }}>
-                <span>所需材料</span>
-                <Tag color="blue" style={{ marginLeft: 8 }}>
-                  共 {getServiceItemMaterialList(selectedService).length} 项
-                </Tag>
-              </div>
-              <Spin spinning={modalLoading}>
-                <List
-                  size="small"
-                  dataSource={getServiceItemMaterialList(selectedService)}
-                  renderItem={(item) => (
-                    <List.Item key={item.id}>
-                  <List.Item.Meta
-                    title={
-                      <span>
-                        {item.is_required ? (
-                          <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>
-                        ) : null}
-                        {item.name}
-                      </span>
-                    }
-                    description={
-                      <div style={{ fontSize: 12, color: '#666' }}>
-                        {item.description && <div>{item.description}</div>}
-                        {item.example && (
-                          <div style={{ marginTop: 4, color: '#999' }}>
-                            示例：{item.example}
-                          </div>
-                        )}
-                      </div>
-                    }
-                  />
-                </List.Item>
-                  )}
-                />
-              </Spin>
-            </div>
-          )}
-        </Form>
-      </Modal>
+      <AppointmentModal
+        open={appointmentModalVisible}
+        service={selectedService}
+        onCancel={() => setAppointmentModalVisible(false)}
+      />
 
       <Modal
         title="服务事项详情"

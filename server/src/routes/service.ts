@@ -421,4 +421,98 @@ router.get('/available-dates', (req: AuthRequest, res) => {
   res.json({ dates: sources });
 });
 
+// 获取我的常用/推荐服务事项
+router.get('/recommended', (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  const { limit = 6 } = req.query as any;
+  const limitNum = Math.min(Math.max(Number(limit), 1), 20);
+
+  const appointmentCounts = db.prepare(`
+    SELECT service_item_id, COUNT(*) as count, MAX(created_at) as last_time
+    FROM appointments
+    WHERE user_id = ? AND status != 'cancelled'
+    GROUP BY service_item_id
+  `).all(userId) as any[];
+
+  const caseCounts = db.prepare(`
+    SELECT service_item_id, COUNT(*) as count, MAX(created_at) as last_time
+    FROM cases
+    WHERE user_id = ?
+    GROUP BY service_item_id
+  `).all(userId) as any[];
+
+  const favorites = db.prepare(`
+    SELECT service_item_id, created_at as last_time
+    FROM favorites
+    WHERE user_id = ?
+  `).all(userId) as any[];
+
+  const scoreMap: Record<string, { score: number; last_time: string; favorite: boolean }> = {};
+
+  appointmentCounts.forEach((item) => {
+    const id = item.service_item_id;
+    if (!scoreMap[id]) {
+      scoreMap[id] = { score: 0, last_time: item.last_time, favorite: false };
+    }
+    scoreMap[id].score += item.count * 2;
+    if (item.last_time > scoreMap[id].last_time) {
+      scoreMap[id].last_time = item.last_time;
+    }
+  });
+
+  caseCounts.forEach((item) => {
+    const id = item.service_item_id;
+    if (!scoreMap[id]) {
+      scoreMap[id] = { score: 0, last_time: item.last_time, favorite: false };
+    }
+    scoreMap[id].score += item.count * 2;
+    if (item.last_time > scoreMap[id].last_time) {
+      scoreMap[id].last_time = item.last_time;
+    }
+  });
+
+  favorites.forEach((item) => {
+    const id = item.service_item_id;
+    if (!scoreMap[id]) {
+      scoreMap[id] = { score: 0, last_time: item.last_time, favorite: false };
+    }
+    scoreMap[id].score += 3;
+    scoreMap[id].favorite = true;
+    if (item.last_time > scoreMap[id].last_time) {
+      scoreMap[id].last_time = item.last_time;
+    }
+  });
+
+  const serviceIds = Object.keys(scoreMap);
+  if (serviceIds.length === 0) {
+    return res.json({ items: [], has_history: false });
+  }
+
+  const placeholders = serviceIds.map(() => '?').join(',');
+  const serviceItems = db.prepare(`
+    SELECT si.*, d.name as department_name, w.name as window_name
+    FROM service_items si
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN windows w ON si.window_id = w.id
+    WHERE si.id IN (${placeholders}) AND si.status = 'active'
+  `).all(...serviceIds) as any[];
+
+  const scoredItems = serviceItems
+    .map((item) => ({
+      ...item,
+      score: scoreMap[item.id]?.score || 0,
+      last_time: scoreMap[item.id]?.last_time || '',
+      is_favorite: scoreMap[item.id]?.favorite || false,
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return b.last_time.localeCompare(a.last_time);
+    })
+    .slice(0, limitNum);
+
+  res.json({ items: scoredItems, has_history: true });
+});
+
 export default router;

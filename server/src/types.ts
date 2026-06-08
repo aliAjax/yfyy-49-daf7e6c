@@ -98,3 +98,26 @@ export interface Case {
   created_at: string;
   updated_at: string;
 }
+
+export type CaseMaterialStatus = 'pending' | 'approved' | 'rejected' | 'correction_pending' | 'correction_submitted' | 'correction_approved' | 'correction_rejected';
+
+export interface CaseMaterial {
+  id: string;
+  case_id: string;
+  name: string;
+  type?: string;
+  file_url?: string;
+  status: CaseMaterialStatus;
+  review_comment?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  correction_comment?: string;
+  correction_file_url?: string;
+  correction_count: number;
+  last_corrected_at?: string;
+  last_correction_reviewed_at?: string;
+  service_item_material_id?: string;
+  is_required: number;
+  created_at: string;
+  updated_at: string;
+}

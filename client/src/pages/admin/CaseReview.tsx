@@ -1,11 +1,11 @@
-import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Tooltip } from 'antd';
-import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Tooltip, Alert } from 'antd';
+import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined, EditOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../api';
 import type { Case, Department, CaseMaterial, CaseFlow, ServiceItemMaterial, User } from '../../types';
-import { CaseStatusText, CaseFlowActionText } from '../../types';
+import { CaseStatusText, CaseFlowActionText, CaseMaterialStatusText, CaseMaterialStatusColor } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import CaseReceipt from '../../components/CaseReceipt';
 
@@ -36,6 +36,10 @@ function CaseReview() {
   const [transferForm] = Form.useForm();
   const [pendingCount, setPendingCount] = useState(0);
   const [approvers, setApprovers] = useState<User[]>([]);
+  const [materialReviewModalVisible, setMaterialReviewModalVisible] = useState(false);
+  const [currentReviewMaterial, setCurrentReviewMaterial] = useState<CaseMaterial | null>(null);
+  const [reviewForm] = Form.useForm();
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
   useEffect(() => {
     loadDepartments();
@@ -182,6 +186,53 @@ function CaseReview() {
       console.error(error);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const canReviewMaterial = (material: CaseMaterial) => {
+    return material.status === 'pending' || material.status === 'correction_submitted';
+  };
+
+  const isCorrectionReview = (material: CaseMaterial) => {
+    return material.status === 'correction_submitted';
+  };
+
+  const handleOpenMaterialReview = (material: CaseMaterial) => {
+    setCurrentReviewMaterial(material);
+    reviewForm.resetFields();
+    setMaterialReviewModalVisible(true);
+  };
+
+  const handleMaterialReview = async (approved: boolean) => {
+    if (!currentCase || !currentReviewMaterial) return;
+    try {
+      const status = approved ? 'approved' : 'rejected';
+      const values = await reviewForm.validateFields();
+      
+      if (!approved && !values.review_comment?.trim()) {
+        message.error('驳回时必须填写审核意见');
+        return;
+      }
+      
+      setReviewSubmitting(true);
+      const res: any = await api.post(`/cases/${currentCase.id}/material-review`, {
+        material_id: currentReviewMaterial.id,
+        status,
+        review_comment: values.review_comment,
+      });
+      message.success(approved ? '审核通过' : '已驳回');
+      setMaterialReviewModalVisible(false);
+      
+      if (res.materials) {
+        setCaseMaterials(res.materials);
+      }
+      
+      handleViewDetail(currentCase);
+      loadCases();
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || '操作失败');
+    } finally {
+      setReviewSubmitting(false);
     }
   };
 
@@ -459,19 +510,64 @@ function CaseReview() {
                       title: '状态',
                       dataIndex: 'status',
                       key: 'status',
-                      width: 100,
-                      render: (s: string) => {
-                        const map: Record<string, string> = {
-                          pending: '待审核',
-                          approved: '通过',
-                          rejected: '不通过',
-                        };
-                        return <Tag>{map[s] || s}</Tag>;
-                      },
+                      width: 110,
+                      render: (s: string) => (
+                        <Tag color={CaseMaterialStatusColor[s]}>
+                          {CaseMaterialStatusText[s] || s}
+                        </Tag>
+                      ),
+                    },
+                    { 
+                      title: '补正次数', 
+                      dataIndex: 'correction_count', 
+                      key: 'correction_count',
+                      width: 80,
+                      render: (count: number) => count || 0,
                     },
                     { title: '审核意见', dataIndex: 'review_comment', key: 'review_comment' },
+                    {
+                      title: '补正说明',
+                      key: 'correction',
+                      width: 150,
+                      render: (_: any, record: CaseMaterial) => (
+                        <div style={{ fontSize: 12 }}>
+                          {record.correction_comment && (
+                            <div style={{ color: '#1890ff', marginBottom: 2 }}>
+                              {record.correction_comment}
+                            </div>
+                          )}
+                          {record.correction_file_url && (
+                            <div style={{ color: '#1890ff', fontSize: 11 }}>
+                              附件: {record.correction_file_url}
+                            </div>
+                          )}
+                          {!record.correction_comment && !record.correction_file_url && (
+                            <span style={{ color: '#bfbfbf' }}>-</span>
+                          )}
+                        </div>
+                      ),
+                    },
+                    {
+                      title: '操作',
+                      key: 'action',
+                      width: 100,
+                      fixed: 'right' as const,
+                      render: (_: any, record: CaseMaterial) => (
+                        canReviewMaterial(record) && (
+                          <Button 
+                            type="link" 
+                            size="small" 
+                            icon={<EditOutlined />}
+                            onClick={() => handleOpenMaterialReview(record)}
+                          >
+                            {isCorrectionReview(record) ? '补正审核' : '审核'}
+                          </Button>
+                        )
+                      ),
+                    },
                   ]}
                   pagination={false}
+                  scroll={{ x: 800 }}
                 />
               </div>
             )}
@@ -633,6 +729,86 @@ function CaseReview() {
             <TextArea rows={4} placeholder="请输入转交说明（选填）" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={currentReviewMaterial && isCorrectionReview(currentReviewMaterial) ? '补正材料审核' : '材料审核'}
+        open={materialReviewModalVisible}
+        onCancel={() => setMaterialReviewModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setMaterialReviewModalVisible(false)}>
+            取消
+          </Button>,
+          <Button 
+            key="reject" 
+            danger 
+            loading={reviewSubmitting} 
+            onClick={() => handleMaterialReview(false)}
+          >
+            驳回
+          </Button>,
+          <Button 
+            key="approve" 
+            type="primary" 
+            loading={reviewSubmitting} 
+            onClick={() => handleMaterialReview(true)}
+          >
+            通过
+          </Button>,
+        ]}
+        width={600}
+        destroyOnClose
+      >
+        {currentReviewMaterial && (
+          <div>
+            <Descriptions bordered column={1} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="材料名称">
+                {currentReviewMaterial.name}
+              </Descriptions.Item>
+              <Descriptions.Item label="当前状态">
+                <Tag color={CaseMaterialStatusColor[currentReviewMaterial.status]}>
+                  {CaseMaterialStatusText[currentReviewMaterial.status] || currentReviewMaterial.status}
+                </Tag>
+              </Descriptions.Item>
+              {currentReviewMaterial.file_url && (
+                <Descriptions.Item label="原件地址">
+                  <a href={currentReviewMaterial.file_url} target="_blank" rel="noreferrer">
+                    {currentReviewMaterial.file_url}
+                  </a>
+                </Descriptions.Item>
+              )}
+              {currentReviewMaterial.review_comment && (
+                <Descriptions.Item label="上次审核意见">
+                  <span style={{ color: '#ff4d4f' }}>{currentReviewMaterial.review_comment}</span>
+                </Descriptions.Item>
+              )}
+              {currentReviewMaterial.correction_comment && (
+                <Descriptions.Item label="补正说明">
+                  <span style={{ color: '#1890ff' }}>{currentReviewMaterial.correction_comment}</span>
+                </Descriptions.Item>
+              )}
+              {currentReviewMaterial.correction_file_url && (
+                <Descriptions.Item label="补正附件">
+                  <a href={currentReviewMaterial.correction_file_url} target="_blank" rel="noreferrer">
+                    {currentReviewMaterial.correction_file_url}
+                  </a>
+                </Descriptions.Item>
+              )}
+              <Descriptions.Item label="补正次数">
+                {currentReviewMaterial.correction_count || 0} 次
+              </Descriptions.Item>
+            </Descriptions>
+            <Form form={reviewForm} layout="vertical">
+              <Form.Item
+                name="review_comment"
+                label="审核意见"
+                rules={[{ required: false, message: '请输入审核意见' }]}
+              >
+                <TextArea rows={4} placeholder="请输入审核意见（驳回时必填）" />
+              </Form.Item>
+            </Form>
+          </div>
+        )}
       </Modal>
 
       <Modal
