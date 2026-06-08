@@ -73,6 +73,8 @@ export interface ServiceItem {
 export interface Appointment {
   id: string;
   user_id: string;
+  user_name?: string;
+  user_phone?: string;
   service_item_id: string;
   service_item_name?: string;
   service_item_code?: string;
@@ -211,6 +213,34 @@ export interface NumberSource {
   time_slots?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface AppointmentBoardServiceItem {
+  service_item_id: string;
+  service_item_name: string;
+  service_item_code?: string;
+  department_id?: string;
+  department_name?: string;
+  total_count: number;
+  booked_count: number;
+  remaining_count: number;
+}
+
+export interface AppointmentBoardDay {
+  date: string;
+  total_count: number;
+  booked_count: number;
+  remaining_count: number;
+  appointment_count: number;
+  service_items: AppointmentBoardServiceItem[];
+  appointments: Appointment[];
+}
+
+export interface AppointmentBoardSummary {
+  total_count: number;
+  booked_count: number;
+  remaining_count: number;
+  appointment_count: number;
 }
 
 export interface OperationLog {

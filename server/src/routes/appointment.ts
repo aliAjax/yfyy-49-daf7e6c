@@ -8,6 +8,137 @@ const router = Router();
 
 router.use(authMiddleware);
 
+// 预约日历看板聚合（管理员/窗口）
+router.get('/board/summary', requireRoles('admin', 'window'), (req: AuthRequest, res) => {
+  const { department_id, service_item_id } = req.query as any;
+  const startDate = dayjs().format('YYYY-MM-DD');
+  const endDate = dayjs().add(29, 'day').format('YYYY-MM-DD');
+
+  let sourceSql = `
+    SELECT ns.date, ns.total_count, ns.booked_count,
+      si.id as service_item_id, si.name as service_item_name, si.code as service_item_code,
+      si.department_id, d.name as department_name
+    FROM number_sources ns
+    LEFT JOIN service_items si ON ns.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
+    WHERE ns.date >= ? AND ns.date <= ?
+  `;
+  const sourceParams: any[] = [startDate, endDate];
+
+  let apptSql = `
+    SELECT a.*, si.name as service_item_name, si.code as service_item_code,
+      si.department_id, d.name as department_name, u.name as user_name, u.phone as user_phone
+    FROM appointments a
+    LEFT JOIN service_items si ON a.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.appointment_date >= ? AND a.appointment_date <= ?
+  `;
+  const apptParams: any[] = [startDate, endDate];
+
+  if (req.user!.role === 'window') {
+    if (req.user!.department_id) {
+      sourceSql += ' AND si.window_id IN (SELECT id FROM windows WHERE department_id = ?)';
+      sourceParams.push(req.user!.department_id);
+      apptSql += ' AND si.window_id IN (SELECT id FROM windows WHERE department_id = ?)';
+      apptParams.push(req.user!.department_id);
+    } else {
+      sourceSql += ' AND 1=0';
+      apptSql += ' AND 1=0';
+    }
+  } else if (department_id) {
+    sourceSql += ' AND si.department_id = ?';
+    sourceParams.push(department_id);
+    apptSql += ' AND si.department_id = ?';
+    apptParams.push(department_id);
+  }
+
+  if (service_item_id) {
+    sourceSql += ' AND ns.service_item_id = ?';
+    sourceParams.push(service_item_id);
+    apptSql += ' AND a.service_item_id = ?';
+    apptParams.push(service_item_id);
+  }
+
+  sourceSql += ' ORDER BY ns.date ASC, si.sort_order ASC, si.created_at DESC';
+  apptSql += ' ORDER BY a.appointment_date ASC, a.time_slot ASC, a.created_at ASC';
+
+  const sources = db.prepare(sourceSql).all(...sourceParams) as any[];
+  const appointments = db.prepare(apptSql).all(...apptParams) as any[];
+
+  const apptsByDate = appointments.reduce<Record<string, any[]>>((acc, appointment) => {
+    if (!acc[appointment.appointment_date]) {
+      acc[appointment.appointment_date] = [];
+    }
+    acc[appointment.appointment_date].push(appointment);
+    return acc;
+  }, {});
+
+  const sourceGroups = sources.reduce<Record<string, any>>((acc, source) => {
+    if (!acc[source.date]) {
+      acc[source.date] = {
+        date: source.date,
+        total_count: 0,
+        booked_count: 0,
+        remaining_count: 0,
+        service_items: [],
+      };
+    }
+
+    acc[source.date].total_count += source.total_count || 0;
+    acc[source.date].booked_count += source.booked_count || 0;
+    acc[source.date].remaining_count += (source.total_count || 0) - (source.booked_count || 0);
+    acc[source.date].service_items.push({
+      service_item_id: source.service_item_id,
+      service_item_name: source.service_item_name,
+      service_item_code: source.service_item_code,
+      department_id: source.department_id,
+      department_name: source.department_name,
+      total_count: source.total_count || 0,
+      booked_count: source.booked_count || 0,
+      remaining_count: (source.total_count || 0) - (source.booked_count || 0),
+    });
+
+    return acc;
+  }, {});
+
+  const days = Array.from({ length: 30 }).map((_, index) => {
+    const date = dayjs(startDate).add(index, 'day').format('YYYY-MM-DD');
+    const sourceGroup = sourceGroups[date] || {
+      date,
+      total_count: 0,
+      booked_count: 0,
+      remaining_count: 0,
+      service_items: [],
+    };
+    const dayAppointments = apptsByDate[date] || [];
+
+    return {
+      ...sourceGroup,
+      appointment_count: dayAppointments.length,
+      appointments: dayAppointments,
+    };
+  });
+
+  const summary = days.reduce(
+    (acc, day) => {
+      acc.total_count += day.total_count;
+      acc.booked_count += day.booked_count;
+      acc.remaining_count += day.remaining_count;
+      acc.appointment_count += day.appointment_count;
+      return acc;
+    },
+    { total_count: 0, booked_count: 0, remaining_count: 0, appointment_count: 0 }
+  );
+
+  res.json({
+    start_date: startDate,
+    end_date: endDate,
+    summary,
+    days,
+  });
+});
+
 // 获取我的预约（群众）
 router.get('/my', (req: AuthRequest, res) => {
   const { status, page = 1, pageSize = 20 } = req.query as any;
