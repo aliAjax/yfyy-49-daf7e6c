@@ -4,9 +4,11 @@ import Login from './pages/Login';
 import CitizenLayout from './layouts/CitizenLayout';
 import AdminLayout from './layouts/AdminLayout';
 import { useAuthStore } from './store/auth';
+import { useFavoriteStore } from './store/favorite';
 
 function App() {
   const { isAuthenticated, user, loadUser } = useAuthStore();
+  const { loadFavorites, reset: resetFavorites } = useFavoriteStore();
   const location = useLocation();
 
   useEffect(() => {
@@ -15,6 +17,15 @@ function App() {
       loadUser();
     }
   }, [user, loadUser]);
+
+  useEffect(() => {
+    if (isAuthenticated && user?.role === 'citizen') {
+      loadFavorites();
+    }
+    if (!isAuthenticated) {
+      resetFavorites();
+    }
+  }, [isAuthenticated, user, loadFavorites, resetFavorites]);
 
   const renderRoutes = () => {
     if (!isAuthenticated) {

@@ -83,6 +83,13 @@ export interface ServiceItemMaterial {
   updated_at: string;
 }
 
+export interface Favorite {
+  id: string;
+  user_id: string;
+  service_item_id: string;
+  created_at: string;
+}
+
 export interface Appointment {
   id: string;
   user_id: string;
@@ -137,8 +144,14 @@ export interface Case {
   window_name?: string;
   department_id?: string;
   department_name?: string;
+  from_department_id?: string;
+  from_department_name?: string;
   current_handler_id?: string;
   handler_name?: string;
+  transfer_from_user_id?: string;
+  transfer_from_user_name?: string;
+  transfer_comment?: string;
+  transfer_time?: string;
   status: CaseStatus;
   priority: string;
   applicant_name?: string;
@@ -152,6 +165,11 @@ export interface Case {
   created_at: string;
   updated_at: string;
   material_list?: ServiceItemMaterial[];
+  is_collaboration_returned?: boolean;
+  collaboration_from_department_id?: string;
+  collaboration_from_department_name?: string;
+  collaboration_time?: string;
+  collaboration_flow_id?: string;
 }
 
 export interface CaseMaterial {
@@ -320,4 +338,29 @@ export const RoleText: Record<UserRole, string> = {
   window: '窗口工作人员',
   approver: '审批人员',
   citizen: '办事群众',
+};
+
+export type CaseFlowAction = 
+  | 'submit'
+  | 'material_review'
+  | 'accept'
+  | 'approve'
+  | 'reject'
+  | 'transfer'
+  | 'receive'
+  | 'return'
+  | 'collaborate_complete'
+  | 'complete';
+
+export const CaseFlowActionText: Record<string, string> = {
+  submit: '提交申请',
+  material_review: '材料审核',
+  accept: '受理',
+  approve: '审批通过',
+  reject: '审批驳回',
+  transfer: '跨科室转交',
+  receive: '接收协同',
+  return: '协同退回',
+  collaborate_complete: '协同办结',
+  complete: '办结',
 };

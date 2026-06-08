@@ -1,20 +1,25 @@
-import { Card, Form, Input, Button, message, Spin, Tabs } from 'antd';
-import { UserOutlined, LockOutlined } from '@ant-design/icons';
+import { Card, Form, Input, Button, message, Spin, Tabs, Row, Col, Empty, Tag } from 'antd';
+import { UserOutlined, LockOutlined, StarFilled, StarOutlined, CalendarOutlined, InfoCircleOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { useAuthStore } from '../../store/auth';
+import { useFavoriteStore } from '../../store/favorite';
 import dayjs from 'dayjs';
+import type { ServiceItem } from '../../types';
 
 const { TabPane } = Tabs;
 
 function CitizenProfile() {
   const navigate = useNavigate();
   const { user, loadUser } = useAuthStore();
+  const { favorites, loading: favoritesLoading, removeFavorite } = useFavoriteStore();
   const [profileForm] = Form.useForm();
   const [passwordForm] = Form.useForm();
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [passwordSubmitting, setPasswordSubmitting] = useState(false);
+
+  const [removeLoading, setRemoveLoading] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -25,6 +30,18 @@ function CitizenProfile() {
       });
     }
   }, [user]);
+
+  const handleRemoveFavorite = async (service: ServiceItem) => {
+    setRemoveLoading(service.id);
+    try {
+      await removeFavorite(service.id);
+      message.success('已取消收藏');
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setRemoveLoading(null);
+    }
+  };
 
   const handleUpdateProfile = async () => {
     try {
@@ -213,6 +230,92 @@ function CitizenProfile() {
                 </Button>
               </Form.Item>
             </Form>
+          </TabPane>
+
+          <TabPane
+            tab={
+              <span>
+                <StarFilled style={{ color: '#faad14' }} />
+                我的收藏
+                <Tag color="blue" style={{ marginLeft: 8 }}>
+                  {favorites.length}
+                </Tag>
+              </span>
+            }
+            key="3"
+          >
+            <Spin spinning={favoritesLoading}>
+              {favorites.length > 0 ? (
+                <Row gutter={[16, 16]}>
+                  {favorites.map((item) => (
+                    <Col span={8} key={item.id}>
+                      <Card
+                        hoverable
+                        className="service-card"
+                        title={item.name}
+                        extra={<span style={{ fontSize: 12, color: '#999' }}>{item.code}</span>}
+                        actions={[
+                          <Button
+                            key="detail"
+                            type="text"
+                            icon={<InfoCircleOutlined />}
+                            onClick={() => navigate(`/citizen/services?item=${item.id}`)}
+                          >
+                            查看详情
+                          </Button>,
+                          <Button
+                            key="appointment"
+                            type="text"
+                            icon={<CalendarOutlined />}
+                            onClick={() => navigate(`/citizen/services?item=${item.id}`)}
+                          >
+                            立即预约
+                          </Button>,
+                          <Button
+                            key="unfavorite"
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            loading={removeLoading === item.id}
+                            onClick={() => handleRemoveFavorite(item)}
+                          >
+                            取消收藏
+                          </Button>,
+                        ]}
+                      >
+                        <div style={{ minHeight: 60, marginBottom: 12 }}>
+                          <p style={{ color: '#666', fontSize: 13, lineHeight: 1.6 }}>
+                            {item.description || '暂无描述'}
+                          </p>
+                        </div>
+                        <div style={{ fontSize: 12, color: '#999', marginBottom: 12 }}>
+                          <span>办理科室：{item.department_name}</span>
+                          <br />
+                          <span>办理时限：{item.processing_time || '3'} 个工作日</span>
+                          <br />
+                          <span>费用：{item.fee ? `¥${item.fee}` : '免费'}</span>
+                        </div>
+                      </Card>
+                    </Col>
+                  ))}
+                </Row>
+              ) : (
+                <div style={{ padding: '40px 0' }}>
+                  <Empty
+                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description="暂无收藏的服务事项"
+                  >
+                    <Button
+                      type="primary"
+                      icon={<StarOutlined />}
+                      onClick={() => navigate('/citizen/services')}
+                    >
+                      去收藏常用事项
+                    </Button>
+                  </Empty>
+                </div>
+              )}
+            </Spin>
           </TabPane>
         </Tabs>
       </Card>

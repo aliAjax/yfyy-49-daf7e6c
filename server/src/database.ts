@@ -234,6 +234,16 @@ export function initDatabase() {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (service_item_id) REFERENCES service_items(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS favorites (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      service_item_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (service_item_id) REFERENCES service_items(id) ON DELETE CASCADE,
+      UNIQUE(user_id, service_item_id)
+    );
   `);
 
   console.log('数据库初始化完成');

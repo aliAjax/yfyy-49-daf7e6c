@@ -4,6 +4,7 @@ import { initDatabase } from './database';
 import authRoutes from './routes/auth';
 import systemRoutes from './routes/system';
 import serviceRoutes from './routes/service';
+import favoriteRoutes from './routes/favorite';
 import appointmentRoutes from './routes/appointment';
 import ticketRoutes from './routes/ticket';
 import caseRoutes from './routes/case';
@@ -29,6 +30,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/system', systemRoutes);
 app.use('/api/service', serviceRoutes);
+app.use('/api/service', favoriteRoutes);
 app.use('/api/appointments', appointmentRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/cases', caseRoutes);

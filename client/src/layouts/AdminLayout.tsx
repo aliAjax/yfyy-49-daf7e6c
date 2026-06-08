@@ -16,6 +16,7 @@ import {
   CheckCircleOutlined,
   LogoutOutlined,
   CalendarOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/auth';
@@ -29,6 +30,7 @@ import NumberSources from '../pages/admin/NumberSources';
 import AppointmentCalendar from '../pages/admin/AppointmentCalendar';
 import CaseManagement from '../pages/admin/CaseManagement';
 import CaseReview from '../pages/admin/CaseReview';
+import CaseCollaboration from '../pages/admin/CaseCollaboration';
 import TicketQueue from '../pages/admin/TicketQueue';
 import Evaluations from '../pages/admin/Evaluations';
 import Statistics from '../pages/admin/Statistics';
@@ -49,6 +51,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/windows', icon: <AppstoreOutlined />, label: '窗口管理' },
     { key: '/admin/number-sources', icon: <NumberOutlined />, label: '号源管理' },
     { key: '/admin/cases', icon: <FileTextOutlined />, label: '办件管理' },
+    { key: '/admin/collaboration', icon: <SwapOutlined />, label: '协同待办' },
     { key: '/admin/evaluations', icon: <StarOutlined />, label: '评价管理' },
     { key: '/admin/statistics', icon: <BarChartOutlined />, label: '统计分析' },
     { key: '/admin/logs', icon: <HistoryOutlined />, label: '操作日志' },
@@ -62,6 +65,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   approver: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/pending-approval', icon: <ClockCircleOutlined />, label: '待我审批' },
+    { key: '/admin/collaboration', icon: <SwapOutlined />, label: '协同待办' },
     { key: '/admin/approved', icon: <CheckCircleOutlined />, label: '我已审批' },
     { key: '/admin/overdue-warning', icon: <ClockCircleOutlined />, label: '超期预警' },
   ],
@@ -146,6 +150,7 @@ function AdminLayout() {
               <Route path="/calling" element={<TicketQueue />} />
               <Route path="/case-accept" element={<CaseManagement />} />
               <Route path="/pending-approval" element={<CaseReview />} />
+              <Route path="/collaboration" element={<CaseCollaboration />} />
               <Route path="/approved" element={<CaseReview />} />
               <Route path="/overdue-warning" element={<CaseReview />} />
               <Route path="/logs" element={<OperationLogs />} />

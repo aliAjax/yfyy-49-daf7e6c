@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import type { Case, CaseMaterial, CaseFlow, Evaluation, ServiceItemMaterial } from '../../types';
-import { CaseStatusText } from '../../types';
+import { CaseStatusText, CaseFlowActionText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
 import CaseReceipt from '../../components/CaseReceipt';
@@ -114,18 +114,40 @@ function CitizenCaseDetail() {
     }
   };
 
+  const getTimelineColor = (action: string, status: string) => {
+    if (status === 'rejected') return 'red';
+    if (status === 'completed' || status === 'approved') return 'green';
+    if (action === 'transfer') return 'purple';
+    if (action === 'receive') return 'cyan';
+    if (action === 'return') return 'orange';
+    if (action === 'collaborate_complete') return 'green';
+    return 'blue';
+  };
+
   const renderTimeline = () => {
     return (
       <Timeline
         items={flows.map((flow) => ({
-          color: flow.status === 'rejected' ? 'red' : flow.status === 'completed' ? 'green' : 'blue',
+          color: getTimelineColor(flow.action, flow.status),
           children: (
             <div>
-              <div style={{ fontWeight: 500 }}>{flow.comment || flow.action}</div>
-              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
-                {flow.from_user_name || '系统'}
-                {flow.to_user_name && ` → ${flow.to_user_name}`}
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>
+                {CaseFlowActionText[flow.action] || flow.action}
               </div>
+              <div style={{ fontSize: 13, color: '#333', marginBottom: 4 }}>
+                {flow.comment || ''}
+              </div>
+              {(flow.from_department_name || flow.to_department_name) && (
+                <div style={{ fontSize: 12, color: '#666', marginBottom: 2 }}>
+                  {flow.from_department_name || '系统'}
+                  {flow.to_department_name && flow.to_department_name !== flow.from_department_name && (
+                    <span style={{ color: '#1890ff', margin: '0 4px' }}>→</span>
+                  )}
+                  {flow.to_department_name && flow.to_department_name !== flow.from_department_name && (
+                    <span>{flow.to_department_name}</span>
+                  )}
+                </div>
+              )}
               <div style={{ fontSize: 12, color: '#999' }}>
                 {dayjs(flow.created_at).format('YYYY-MM-DD HH:mm:ss')}
               </div>

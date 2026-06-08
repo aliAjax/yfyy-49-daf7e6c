@@ -69,6 +69,13 @@ export interface ServiceItemMaterial {
   updated_at: string;
 }
 
+export interface Favorite {
+  id: string;
+  user_id: string;
+  service_item_id: string;
+  created_at: string;
+}
+
 export interface Case {
   id: string;
   case_number: string;

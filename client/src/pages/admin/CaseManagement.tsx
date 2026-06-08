@@ -1,11 +1,11 @@
-import { Card, Table, Button, Select, Input, Modal, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Form } from 'antd';
-import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, PrinterOutlined, PlusOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Select, Input, Modal, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Form, Tooltip } from 'antd';
+import { SearchOutlined, EyeOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, PrinterOutlined, PlusOutlined, SwapOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../../api';
 import type { Case, Department, ServiceItem, CaseMaterial, CaseFlow, ServiceItemMaterial, Window } from '../../types';
-import { CaseStatusText } from '../../types';
+import { CaseStatusText, CaseFlowActionText } from '../../types';
 import { getCaseMaterialList, hasCaseMaterials } from '../../utils/materials';
 import CaseReceipt from '../../components/CaseReceipt';
 
@@ -200,6 +200,30 @@ function CaseManagement() {
       dataIndex: 'department_name',
       key: 'department_name',
       width: 120,
+    },
+    {
+      title: '协同标记',
+      key: 'collaboration',
+      width: 120,
+      render: (_: any, record: Case) => {
+        if (record.collaboration_flow_id) {
+          return (
+            <Tooltip title={`来自 ${record.collaboration_from_department_name || '其他科室'} 的协同件`}>
+              <Tag color="purple" icon={<SwapOutlined />}>
+                协同件
+              </Tag>
+            </Tooltip>
+          );
+        }
+        if (record.status === 'cross_department') {
+          return (
+            <Tag color="gold" icon={<SwapOutlined />}>
+              流转中
+            </Tag>
+          );
+        }
+        return <span style={{ color: '#bfbfbf', fontSize: 12 }}>-</span>;
+      },
     },
     {
       title: '当前处理人',
@@ -499,8 +523,32 @@ function CaseManagement() {
                   dataSource={caseFlows}
                   rowKey="id"
                   columns={[
-                    { title: '操作', dataIndex: 'action', key: 'action', width: 100 },
-                    { title: '状态', dataIndex: 'status', key: 'status', width: 120 },
+                    {
+                      title: '操作',
+                      dataIndex: 'action',
+                      key: 'action',
+                      width: 100,
+                      render: (action: string) => CaseFlowActionText[action] || action,
+                    },
+                    {
+                      title: '状态',
+                      dataIndex: 'status',
+                      key: 'status',
+                      width: 120,
+                      render: (status: string) => CaseStatusText[status as keyof typeof CaseStatusText] || status,
+                    },
+                    {
+                      title: '流转',
+                      key: 'flow',
+                      width: 200,
+                      render: (_: any, record: CaseFlow) => (
+                        <div>
+                          <div>{record.from_department_name || '-'}</div>
+                          <div style={{ color: '#1890ff', fontSize: 12 }}>→</div>
+                          <div>{record.to_department_name || '-'}</div>
+                        </div>
+                      ),
+                    },
                     { title: '操作人', dataIndex: 'from_user_name', key: 'from_user_name', width: 100 },
                     { title: '意见', dataIndex: 'comment', key: 'comment' },
                     {

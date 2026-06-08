@@ -1,10 +1,13 @@
-import { Card, Row, Col, Statistic, Button, List, Tag, Space } from 'antd';
+import { Card, Row, Col, Statistic, Button, List, Tag, Space, Empty } from 'antd';
 import {
   FileTextOutlined,
   CalendarOutlined,
   CheckCircleOutlined,
   ClockCircleOutlined,
   RightOutlined,
+  StarOutlined,
+  StarFilled,
+  LoginOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
@@ -12,9 +15,14 @@ import api from '../../api';
 import type { ServiceItem } from '../../types';
 import { CaseStatusText } from '../../types';
 import dayjs from 'dayjs';
+import { useAuthStore } from '../../store/auth';
+import { useFavoriteStore } from '../../store/favorite';
+import { message } from 'antd';
 
 function CitizenHome() {
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuthStore();
+  const { favorites, loading: favoritesLoading, removeFavorite } = useFavoriteStore();
   const [stats, setStats] = useState<any>({});
   const [recentCases, setRecentCases] = useState<any[]>([]);
   const [hotServices, setHotServices] = useState<ServiceItem[]>([]);
@@ -58,6 +66,16 @@ function CitizenHome() {
       completed: 'success',
     };
     return colorMap[status] || 'default';
+  };
+
+  const handleRemoveFavorite = async (service: ServiceItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await removeFavorite(service.id);
+      message.success('已取消收藏');
+    } catch (error) {
+      console.error(error);
+    }
   };
 
   return (
@@ -108,6 +126,85 @@ function CitizenHome() {
           </Card>
         </Col>
       </Row>
+
+      {isAuthenticated && (
+        <Card
+          title={
+            <span>
+              <StarFilled style={{ color: '#faad14', marginRight: 8 }} />
+              常用服务
+            </span>
+          }
+          extra={
+            <Button type="link" onClick={() => navigate('/citizen/favorites')}>
+              查看全部 <RightOutlined />
+            </Button>
+          }
+          style={{ marginBottom: 24 }}
+          loading={favoritesLoading}
+        >
+          {favorites.length > 0 ? (
+            <Row gutter={[16, 16]}>
+              {favorites.map((item) => (
+                <Col span={4} key={item.id}>
+                  <Card
+                    hoverable
+                    className="service-card"
+                    onClick={() => navigate(`/citizen/services?item=${item.id}`)}
+                    actions={[
+                      <Button
+                        key="unfavorite"
+                        type="text"
+                        size="small"
+                        icon={<StarFilled style={{ color: '#faad14' }} />}
+                        onClick={(e) => handleRemoveFavorite(item, e)}
+                      >
+                        取消收藏
+                      </Button>,
+                    ]}
+                  >
+                    <div style={{ textAlign: 'center', padding: '12px 0' }}>
+                      <div style={{ fontSize: 28, marginBottom: 8 }}>⭐</div>
+                      <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>{item.name}</div>
+                      <div style={{ fontSize: 11, color: '#999' }}>{item.department_name}</div>
+                    </div>
+                  </Card>
+                </Col>
+              ))}
+            </Row>
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="暂无常用服务"
+            >
+              <Button type="primary" icon={<StarOutlined />} onClick={() => navigate('/citizen/services')}>
+                去收藏常用事项
+              </Button>
+            </Empty>
+          )}
+        </Card>
+      )}
+
+      {!isAuthenticated && (
+        <Card
+          title={
+            <span>
+              <StarOutlined style={{ color: '#faad14', marginRight: 8 }} />
+              常用服务
+            </span>
+          }
+          style={{ marginBottom: 24 }}
+        >
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="登录后查看常用服务"
+          >
+            <Button type="primary" icon={<LoginOutlined />} onClick={() => navigate('/login')}>
+              立即登录
+            </Button>
+          </Empty>
+        </Card>
+      )}
 
       <Row gutter={16}>
         <Col span={16}>

@@ -1,5 +1,5 @@
-import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Tooltip } from 'antd';
-import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Select, Tabs, Badge, Tooltip } from 'antd';
+import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined, ImportOutlined, RollbackOutlined, SendOutlined, UserOutlined, TeamOutlined, HistoryOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -11,8 +11,11 @@ import CaseReceipt from '../../components/CaseReceipt';
 
 const { TextArea } = AntInput;
 
-function CaseReview() {
+type TabKey = 'all' | 'pending_receive' | 'mine' | 'initiated';
+
+function CaseCollaboration() {
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<TabKey>('all');
   const [loading, setLoading] = useState(false);
   const [cases, setCases] = useState<Case[]>([]);
   const [total, setTotal] = useState(0);
@@ -20,27 +23,37 @@ function CaseReview() {
   const [pageSize, setPageSize] = useState(10);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [keyword, setKeyword] = useState('');
-  const [serviceItemId, setServiceItemId] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
   const [receiptVisible, setReceiptVisible] = useState(false);
   const [currentCase, setCurrentCase] = useState<Case | null>(null);
   const [caseMaterials, setCaseMaterials] = useState<CaseMaterial[]>([]);
   const [caseFlows, setCaseFlows] = useState<CaseFlow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [approveModalVisible, setApproveModalVisible] = useState(false);
-  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [receiveModalVisible, setReceiveModalVisible] = useState(false);
+  const [returnModalVisible, setReturnModalVisible] = useState(false);
+  const [completeModalVisible, setCompleteModalVisible] = useState(false);
   const [transferModalVisible, setTransferModalVisible] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [approveForm] = Form.useForm();
-  const [rejectForm] = Form.useForm();
+  const [receiveForm] = Form.useForm();
+  const [returnForm] = Form.useForm();
+  const [completeForm] = Form.useForm();
   const [transferForm] = Form.useForm();
-  const [pendingCount, setPendingCount] = useState(0);
   const [approvers, setApprovers] = useState<User[]>([]);
+  const [stats, setStats] = useState({
+    total: 0,
+    pending_receive: 0,
+    mine: 0,
+    initiated: 0,
+  });
 
   useEffect(() => {
     loadDepartments();
+    loadStats();
+  }, []);
+
+  useEffect(() => {
     loadCases();
-  }, [page, pageSize]);
+  }, [activeTab, page, pageSize]);
 
   const loadDepartments = async () => {
     try {
@@ -51,26 +64,38 @@ function CaseReview() {
     }
   };
 
+  const loadStats = async () => {
+    try {
+      const res: any = await api.get('/cases/collaboration/stats');
+      setStats(res || { total: 0, pending_receive: 0, mine: 0, initiated: 0 });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const loadCases = async () => {
     setLoading(true);
     try {
       const params: any = {
-        status: 'reviewing',
+        type: activeTab,
         page,
         pageSize,
       };
       if (keyword) params.keyword = keyword;
-      if (serviceItemId) params.service_item_id = serviceItemId;
 
-      const res: any = await api.get('/cases', { params });
+      const res: any = await api.get('/cases/collaboration/todo', { params });
       setCases(res.cases || []);
       setTotal(res.total || 0);
-      setPendingCount(res.total || 0);
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTabChange = (key: string) => {
+    setActiveTab(key as TabKey);
+    setPage(1);
   };
 
   const handleSearch = () => {
@@ -80,7 +105,6 @@ function CaseReview() {
 
   const handleReset = () => {
     setKeyword('');
-    setServiceItemId('');
     setPage(1);
     loadCases();
   };
@@ -108,20 +132,21 @@ function CaseReview() {
     setReceiptVisible(true);
   };
 
-  const handleApprove = (caseItem: Case) => {
+  const handleReceive = (caseItem: Case) => {
     setCurrentCase(caseItem);
-    approveForm.resetFields();
-    setApproveModalVisible(true);
+    receiveForm.resetFields();
+    setReceiveModalVisible(true);
   };
 
-  const handleApproveSubmit = async () => {
+  const handleReceiveSubmit = async () => {
     try {
-      const values = await approveForm.validateFields();
+      const values = await receiveForm.validateFields();
       setSubmitting(true);
-      await api.post(`/cases/${currentCase?.id}/approve`, values);
-      message.success('审批通过');
-      setApproveModalVisible(false);
+      await api.post(`/cases/${currentCase?.id}/receive`, values);
+      message.success('接收成功');
+      setReceiveModalVisible(false);
       loadCases();
+      loadStats();
     } catch (error) {
       console.error(error);
     } finally {
@@ -129,20 +154,43 @@ function CaseReview() {
     }
   };
 
-  const handleReject = (caseItem: Case) => {
+  const handleReturn = (caseItem: Case) => {
     setCurrentCase(caseItem);
-    rejectForm.resetFields();
-    setRejectModalVisible(true);
+    returnForm.resetFields();
+    setReturnModalVisible(true);
   };
 
-  const handleRejectSubmit = async () => {
+  const handleReturnSubmit = async () => {
     try {
-      const values = await rejectForm.validateFields();
+      const values = await returnForm.validateFields();
       setSubmitting(true);
-      await api.post(`/cases/${currentCase?.id}/reject`, values);
-      message.success('已驳回');
-      setRejectModalVisible(false);
+      await api.post(`/cases/${currentCase?.id}/return`, values);
+      message.success('退回成功');
+      setReturnModalVisible(false);
       loadCases();
+      loadStats();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleComplete = (caseItem: Case) => {
+    setCurrentCase(caseItem);
+    completeForm.resetFields();
+    setCompleteModalVisible(true);
+  };
+
+  const handleCompleteSubmit = async () => {
+    try {
+      const values = await completeForm.validateFields();
+      setSubmitting(true);
+      await api.post(`/cases/${currentCase?.id}/collaborate-complete`, values);
+      message.success('协同办结成功');
+      setCompleteModalVisible(false);
+      loadCases();
+      loadStats();
     } catch (error) {
       console.error(error);
     } finally {
@@ -175,9 +223,10 @@ function CaseReview() {
       const values = await transferForm.validateFields();
       setSubmitting(true);
       await api.post(`/cases/${currentCase?.id}/transfer`, values);
-      message.success('流转成功');
+      message.success('转交成功');
       setTransferModalVisible(false);
       loadCases();
+      loadStats();
     } catch (error) {
       console.error(error);
     } finally {
@@ -201,13 +250,88 @@ function CaseReview() {
     return colorMap[status] || 'default';
   };
 
+  const renderFlowInfo = (record: Case) => {
+    const fromDept = record.from_department_name || '-';
+    const fromUser = record.transfer_from_user_name || '';
+    const transferTime = record.transfer_time ? dayjs(record.transfer_time).format('MM-DD HH:mm') : '-';
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+          <TeamOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          <span style={{ fontSize: 12, color: '#595959' }}>来源：{fromDept}</span>
+        </div>
+        {fromUser ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+            <UserOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+            <span style={{ fontSize: 12, color: '#595959' }}>转交人：{fromUser}</span>
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          <span style={{ fontSize: 12, color: '#595959' }}>{transferTime}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderHandler = (text: string) => {
+    if (text) {
+      return (
+        <Tag color="green" icon={<UserOutlined />} style={{ margin: 0 }}>
+          {text}
+        </Tag>
+      );
+    }
+    return <Badge status="warning" text="待接收" />;
+  };
+
+  const renderAction = (record: Case) => {
+    const isMine = !!record.current_handler_id;
+    const isInitiatedTab = activeTab === 'initiated';
+
+    return (
+      <Space size="small" wrap>
+        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
+          详情
+        </Button>
+        {!isMine && !isInitiatedTab && (
+          <Button type="primary" size="small" ghost icon={<ImportOutlined />} onClick={() => handleReceive(record)}>
+            接收
+          </Button>
+        )}
+        {isMine && !isInitiatedTab && (
+          <>
+            <Button type="link" size="small" danger icon={<RollbackOutlined />} onClick={() => handleReturn(record)}>
+              退回
+            </Button>
+            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleComplete(record)}>
+              办结
+            </Button>
+          </>
+        )}
+        {!isInitiatedTab && (
+          <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => handleTransfer(record)}>
+            转交
+          </Button>
+        )}
+        {isInitiatedTab && (
+          <Tooltip title="在目标科室办理中，请等待办理结果">
+            <Tag color="processing" icon={<ClockCircleOutlined />} style={{ margin: 0 }}>
+              办理中
+            </Tag>
+          </Tooltip>
+        )}
+      </Space>
+    );
+  };
+
   const columns = [
     {
       title: '办件编号',
       dataIndex: 'case_number',
       key: 'case_number',
       width: 160,
-      render: (text: string) => <span style={{ fontFamily: 'monospace' }}>{text}</span>,
+      render: (text: string) => <span style={{ fontFamily: 'monospace', fontWeight: 500 }}>{text}</span>,
     },
     {
       title: '服务事项',
@@ -222,27 +346,28 @@ function CaseReview() {
       width: 100,
     },
     {
-      title: '所属科室',
+      title: '流转信息',
+      key: 'flow_info',
+      width: 200,
+      render: renderFlowInfo,
+    },
+    {
+      title: '当前科室',
       dataIndex: 'department_name',
       key: 'department_name',
       width: 120,
+      render: (text: string) => (
+        <Tag color="blue" icon={<TeamOutlined />} style={{ margin: 0 }}>
+          {text}
+        </Tag>
+      ),
     },
     {
-      title: '协同标记',
-      key: 'collaboration',
-      width: 130,
-      render: (_: any, record: Case) => {
-        if (record.collaboration_flow_id) {
-          return (
-            <Tooltip title={`来自 ${record.collaboration_from_department_name || '其他科室'} 的协同件`}>
-              <Tag color="purple" icon={<SwapOutlined />}>
-                协同件
-              </Tag>
-            </Tooltip>
-          );
-        }
-        return <span style={{ color: '#bfbfbf', fontSize: 12 }}>-</span>;
-      },
+      title: '当前处理人',
+      dataIndex: 'handler_name',
+      key: 'handler_name',
+      width: 110,
+      render: renderHandler,
     },
     {
       title: '状态',
@@ -256,35 +381,49 @@ function CaseReview() {
       ),
     },
     {
-      title: '申请时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      width: 180,
-      render: (text: string) => dayjs(text).format('YYYY-MM-DD HH:mm'),
-    },
-    {
       title: '操作',
       key: 'action',
-      width: 320,
+      width: 340,
       fixed: 'right' as const,
-      render: (_: any, record: Case) => (
-        <Space size="small">
-          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
-            详情
-          </Button>
-          <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handleViewReceipt(record)}>
-            回执
-          </Button>
-          <Button type="link" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record)}>
-            通过
-          </Button>
-          <Button type="link" size="small" danger icon={<CloseOutlined />} onClick={() => handleReject(record)}>
-            驳回
-          </Button>
-          <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => handleTransfer(record)}>
-            流转
-          </Button>
-        </Space>
+      render: renderAction,
+    },
+  ];
+
+  const tabItems = [
+    {
+      key: 'all',
+      label: (
+        <span>
+          <FileTextOutlined /> 全部协同
+          <Badge count={stats.total} style={{ marginLeft: 8 }} />
+        </span>
+      ),
+    },
+    {
+      key: 'pending_receive',
+      label: (
+        <span>
+          <ClockCircleOutlined /> 待我接收
+          <Badge count={stats.pending_receive} style={{ marginLeft: 8 }} />
+        </span>
+      ),
+    },
+    {
+      key: 'mine',
+      label: (
+        <span>
+          <UserOutlined /> 我办理的
+          <Badge count={stats.mine} style={{ marginLeft: 8 }} />
+        </span>
+      ),
+    },
+    {
+      key: 'initiated',
+      label: (
+        <span>
+          <HistoryOutlined /> 我发起的
+          <Badge count={stats.initiated} style={{ marginLeft: 8 }} />
+        </span>
       ),
     },
   ];
@@ -292,33 +431,43 @@ function CaseReview() {
   return (
     <div>
       <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-        <Col span={8}>
+        <Col span={6}>
           <Card>
             <Statistic
-              title="待我审批"
-              value={pendingCount}
+              title="全部协同办件"
+              value={stats.total}
               prefix={<FileTextOutlined style={{ color: '#faad14' }} />}
               valueStyle={{ color: '#faad14' }}
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <Card>
             <Statistic
-              title="今日受理"
-              value={0}
+              title="待接收"
+              value={stats.pending_receive}
               prefix={<ClockCircleOutlined style={{ color: '#1890ff' }} />}
               valueStyle={{ color: '#1890ff' }}
             />
           </Card>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <Card>
             <Statistic
-              title="今日办结"
-              value={0}
-              prefix={<CheckOutlined style={{ color: '#52c41a' }} />}
+              title="我办理的"
+              value={stats.mine}
+              prefix={<UserOutlined style={{ color: '#52c41a' }} />}
               valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="我发起的"
+              value={stats.initiated}
+              prefix={<HistoryOutlined style={{ color: '#722ed1' }} />}
+              valueStyle={{ color: '#722ed1' }}
             />
           </Card>
         </Col>
@@ -344,23 +493,35 @@ function CaseReview() {
         </Space>
       </Card>
 
-      <Card title="待审批列表">
+      <Card
+        title={
+          <Tabs
+            activeKey={activeTab}
+            items={tabItems}
+            onChange={handleTabChange}
+            size="large"
+            style={{ marginBottom: -16, marginTop: -8 }}
+          />
+        }
+        headStyle={{ paddingBottom: 0 }}
+        bodyStyle={{ paddingTop: 0 }}
+      >
         <Table
           columns={columns}
           dataSource={cases}
           rowKey="id"
           loading={loading}
-          scroll={{ x: 1200 }}
+          scroll={{ x: 1400 }}
           pagination={{
             current: page,
             pageSize,
             total,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 条`,
-            onChange: (page, pageSize) => {
-              setPage(page);
-              setPageSize(pageSize);
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p, ps) => {
+              setPage(p);
+              setPageSize(ps);
             },
           }}
         />
@@ -399,10 +560,21 @@ function CaseReview() {
               <Descriptions.Item label="所属科室">{currentCase.department_name}</Descriptions.Item>
               <Descriptions.Item label="申请人">{currentCase.applicant_name}</Descriptions.Item>
               <Descriptions.Item label="联系电话">{currentCase.applicant_phone || '-'}</Descriptions.Item>
-              <Descriptions.Item label="当前处理人">{currentCase.handler_name || '-'}</Descriptions.Item>
+              <Descriptions.Item label="当前处理人">{currentCase.handler_name || '待接收'}</Descriptions.Item>
               <Descriptions.Item label="申请时间">
                 {dayjs(currentCase.created_at).format('YYYY-MM-DD HH:mm')}
               </Descriptions.Item>
+              {currentCase.from_department_name && (
+                <Descriptions.Item label="来源科室" span={2}>
+                  <Tag color="purple" icon={<TeamOutlined />}>{currentCase.from_department_name}</Tag>
+                  {currentCase.transfer_from_user_name ? `  转交人：${currentCase.transfer_from_user_name}` : ''}
+                </Descriptions.Item>
+              )}
+              {currentCase.transfer_comment && (
+                <Descriptions.Item label="转交说明" span={2}>
+                  {currentCase.transfer_comment}
+                </Descriptions.Item>
+              )}
             </Descriptions>
 
             {currentCase && hasCaseMaterials(currentCase) && (
@@ -428,15 +600,13 @@ function CaseReview() {
                         title={item.name}
                         description={
                           <div style={{ fontSize: 12 }}>
-                            {item.description && (
-                              <div style={{ marginBottom: 2 }}>{item.description}</div>
-                            )}
-                            {item.example && (
+                            {item.description ? <div style={{ marginBottom: 2 }}>{item.description}</div> : null}
+                            {item.example ? (
                               <div style={{ color: '#999' }}>
                                 <span style={{ color: '#1890ff' }}>示例：</span>
                                 {item.example}
                               </div>
-                            )}
+                            ) : null}
                           </div>
                         }
                       />
@@ -529,52 +699,78 @@ function CaseReview() {
       </Modal>
 
       <Modal
-        title="审批通过"
-        open={approveModalVisible}
-        onCancel={() => setApproveModalVisible(false)}
+        title="接收协同办件"
+        open={receiveModalVisible}
+        onCancel={() => setReceiveModalVisible(false)}
         footer={[
-          <Button key="cancel" onClick={() => setApproveModalVisible(false)}>
+          <Button key="cancel" onClick={() => setReceiveModalVisible(false)}>
             取消
           </Button>,
-          <Button key="submit" type="primary" loading={submitting} onClick={handleApproveSubmit}>
-            确认通过
+          <Button key="submit" type="primary" loading={submitting} onClick={handleReceiveSubmit}>
+            确认接收
           </Button>,
         ]}
         width={500}
         destroyOnClose
       >
-        <Form form={approveForm} layout="vertical">
-          <Form.Item name="comment" label="审批意见">
-            <TextArea rows={4} placeholder="请输入审批意见（选填）" />
-          </Form.Item>
-          <Form.Item name="result" label="审批结果">
-            <TextArea rows={3} placeholder="请输入审批结果说明（选填）" />
+        <Form form={receiveForm} layout="vertical">
+          <Form.Item name="comment" label="接收意见">
+            <TextArea rows={4} placeholder="请输入接收意见（选填）" />
           </Form.Item>
         </Form>
       </Modal>
 
       <Modal
-        title="审批驳回"
-        open={rejectModalVisible}
-        onCancel={() => setRejectModalVisible(false)}
+        title="退回协同办件"
+        open={returnModalVisible}
+        onCancel={() => setReturnModalVisible(false)}
         footer={[
-          <Button key="cancel" onClick={() => setRejectModalVisible(false)}>
+          <Button key="cancel" onClick={() => setReturnModalVisible(false)}>
             取消
           </Button>,
-          <Button key="submit" type="primary" danger loading={submitting} onClick={handleRejectSubmit}>
-            确认驳回
+          <Button key="submit" type="primary" danger loading={submitting} onClick={handleReturnSubmit}>
+            确认退回
           </Button>,
         ]}
         width={500}
         destroyOnClose
       >
-        <Form form={rejectForm} layout="vertical">
+        <Form form={returnForm} layout="vertical">
           <Form.Item
             name="comment"
-            label="驳回原因"
-            rules={[{ required: true, message: '请输入驳回原因' }]}
+            label="退回原因"
+            rules={[{ required: true, message: '请输入退回原因' }]}
           >
-            <TextArea rows={4} placeholder="请输入驳回原因" />
+            <TextArea rows={4} placeholder="请输入退回原因" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="协同办结"
+        open={completeModalVisible}
+        onCancel={() => setCompleteModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCompleteModalVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" loading={submitting} onClick={handleCompleteSubmit}>
+            确认办结
+          </Button>,
+        ]}
+        width={500}
+        destroyOnClose
+      >
+        <Form form={completeForm} layout="vertical">
+          <Form.Item
+            name="comment"
+            label="办结意见"
+            rules={[{ required: true, message: '请输入办结意见' }]}
+          >
+            <TextArea rows={4} placeholder="请输入办结意见" />
+          </Form.Item>
+          <Form.Item name="result" label="办理结果">
+            <TextArea rows={3} placeholder="请输入办理结果说明（选填）" />
           </Form.Item>
         </Form>
       </Modal>
@@ -643,15 +839,15 @@ function CaseReview() {
         width={900}
         destroyOnClose
       >
-        {currentCase && (
+        {currentCase ? (
           <CaseReceipt
             caseData={currentCase}
             onClose={() => setReceiptVisible(false)}
           />
-        )}
+        ) : null}
       </Modal>
     </div>
   );
 }
 
-export default CaseReview;
+export default CaseCollaboration;

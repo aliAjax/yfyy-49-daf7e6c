@@ -51,7 +51,14 @@ router.get('/my', (req: AuthRequest, res) => {
   sql += ' ORDER BY c.created_at DESC LIMIT ? OFFSET ?';
   params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
 
-  const cases = db.prepare(sql).all(...params);
+  let cases = db.prepare(sql).all(...params);
+
+  cases = cases.map((c: any) => {
+    if (c.handler_name) {
+      c.handler_name = c.handler_name.charAt(0) + '*'.repeat(c.handler_name.length - 1);
+    }
+    return c;
+  });
 
   res.json({ cases, total: total.count, page: Number(page), pageSize: Number(pageSize) });
 });
@@ -63,12 +70,22 @@ router.get('/', (req: AuthRequest, res) => {
   let sql = `
     SELECT c.*, si.name as service_item_name, si.code as service_item_code,
       d.name as department_name, u.name as user_name, u.phone as user_phone,
-      handler.name as handler_name
+      handler.name as handler_name,
+      cf.id as collaboration_flow_id,
+      cf.from_department_id as collaboration_from_department_id,
+      collab_d.name as collaboration_from_department_name,
+      cf.created_at as collaboration_time
     FROM cases c
     LEFT JOIN service_items si ON c.service_item_id = si.id
     LEFT JOIN departments d ON c.department_id = d.id
     LEFT JOIN users u ON c.user_id = u.id
     LEFT JOIN users handler ON c.current_handler_id = handler.id
+    LEFT JOIN case_flows cf ON cf.id = (
+      SELECT id FROM case_flows 
+      WHERE case_id = c.id AND action = 'receive' 
+      ORDER BY created_at DESC LIMIT 1
+    )
+    LEFT JOIN departments collab_d ON cf.from_department_id = collab_d.id
     WHERE 1=1
   `;
   const params: any[] = [];
@@ -101,7 +118,7 @@ router.get('/', (req: AuthRequest, res) => {
   }
 
   const total = db.prepare(sql.replace(
-    'SELECT c.*, si.name as service_item_name, si.code as service_item_code, d.name as department_name, u.name as user_name, u.phone as user_phone, handler.name as handler_name',
+    'SELECT c.*, si.name as service_item_name, si.code as service_item_code, d.name as department_name, u.name as user_name, u.phone as user_phone, handler.name as handler_name, cf.id as collaboration_flow_id, cf.from_department_id as collaboration_from_department_id, collab_d.name as collaboration_from_department_name, cf.created_at as collaboration_time',
     'SELECT COUNT(*) as count'
   )).get(...params) as any;
 
@@ -145,7 +162,7 @@ router.get('/:id', (req: AuthRequest, res) => {
   }
 
   const materials = db.prepare('SELECT * FROM case_materials WHERE case_id = ? ORDER BY created_at').all(id);
-  const flows = db.prepare(`
+  let flows = db.prepare(`
     SELECT cf.*, from_d.name as from_department_name, to_d.name as to_department_name,
       from_u.name as from_user_name, to_u.name as to_user_name
     FROM case_flows cf
@@ -164,6 +181,29 @@ router.get('/:id', (req: AuthRequest, res) => {
   `).all(caseItem.service_item_id);
 
   caseItem.material_list = requiredMaterialList.length > 0 ? requiredMaterialList : null;
+
+  if (req.user!.role === 'citizen') {
+    delete caseItem.user_phone;
+    delete caseItem.user_id_card;
+    if (caseItem.applicant_phone) {
+      caseItem.applicant_phone = caseItem.applicant_phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
+    }
+    if (caseItem.handler_name) {
+      caseItem.handler_name = caseItem.handler_name.charAt(0) + '*'.repeat(caseItem.handler_name.length - 1);
+    }
+    if (caseItem.user_name) {
+      caseItem.user_name = caseItem.user_name.charAt(0) + '*'.repeat(caseItem.user_name.length - 1);
+    }
+    flows = flows.map((flow: any) => {
+      if (flow.from_user_name) {
+        flow.from_user_name = flow.from_user_name.charAt(0) + '*'.repeat(flow.from_user_name.length - 1);
+      }
+      if (flow.to_user_name) {
+        flow.to_user_name = flow.to_user_name.charAt(0) + '*'.repeat(flow.to_user_name.length - 1);
+      }
+      return flow;
+    });
+  }
 
   res.json({ case: caseItem, materials, flows });
 });
@@ -435,55 +475,406 @@ router.post('/:id/reject', requireRoles('approver', 'admin'), (req: AuthRequest,
   res.json({ message: '已驳回' });
 });
 
-// 跨科室流转
+// 跨科室转交（增强版：支持转交科室或指定审批人）
 router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
-  const { to_department_id, comment } = req.body;
+  const { to_department_id, to_user_id, comment } = req.body;
   
   const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
   if (!caseItem) {
     return res.status(404).json({ message: '办件不存在' });
   }
 
-  if (!to_department_id) {
-    return res.status(400).json({ message: '请选择目标科室' });
+  if (caseItem.status !== 'reviewing' && caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前状态不支持转交' });
   }
 
-  if (to_department_id === caseItem.department_id) {
-    return res.status(400).json({ message: '不能流转到同一科室' });
-  }
-
-  const toDept = db.prepare('SELECT * FROM departments WHERE id = ?').get(to_department_id);
-  if (!toDept) {
-    return res.status(400).json({ message: '目标科室不存在' });
+  if (!to_department_id && !to_user_id) {
+    return res.status(400).json({ message: '请选择目标科室或指定审批人' });
   }
 
   if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
     return res.status(403).json({ message: '无权流转其他科室的办件' });
   }
 
+  let targetDepartmentId = to_department_id;
+  let targetUserId = to_user_id || null;
+
+  if (to_user_id) {
+    const toUser = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(to_user_id, 'approver') as any;
+    if (!toUser) {
+      return res.status(400).json({ message: '指定审批人不存在或不是审批角色' });
+    }
+    if (toUser.status !== 'active') {
+      return res.status(400).json({ message: '指定审批人账号未激活' });
+    }
+    targetDepartmentId = toUser.department_id;
+    targetUserId = toUser.id;
+  }
+
+  if (!targetDepartmentId) {
+    return res.status(400).json({ message: '无法确定目标科室' });
+  }
+
+  if (targetDepartmentId === caseItem.department_id && !to_user_id) {
+    return res.status(400).json({ message: '不能流转到同一科室' });
+  }
+
+  const toDept = db.prepare('SELECT * FROM departments WHERE id = ?').get(targetDepartmentId);
+  if (!toDept) {
+    return res.status(400).json({ message: '目标科室不存在' });
+  }
+
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE cases SET department_id = ?, status = 'cross_department', 
-        current_handler_id = NULL, updated_at = CURRENT_TIMESTAMP
+        current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(to_department_id, id);
+    `).run(targetDepartmentId, targetUserId, id);
 
     db.prepare(`
       INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
         from_user_id, to_user_id, action, status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, NULL, 'transfer', 'cross_department', ?, CURRENT_TIMESTAMP)
-    `).run(uuidv4(), id, caseItem.department_id, to_department_id, req.user!.id, comment || '跨科室流转');
+      VALUES (?, ?, ?, ?, ?, ?, 'transfer', 'cross_department', ?, CURRENT_TIMESTAMP)
+    `).run(uuidv4(), id, caseItem.department_id, targetDepartmentId, 
+      req.user!.id, targetUserId, comment || '跨科室转交');
+  });
+
+  tx();
+
+  if (targetUserId) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, title, content, related_id)
+      VALUES (?, ?, 'case', '收到协同办件', ?, ?)
+    `).run(uuidv4(), targetUserId, 
+      `您收到一件协同办理的办件：${caseItem.case_number}`, id);
+  }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '跨科室转交', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, 
+    `办件${caseItem.case_number} 跨科室转交：${caseItem.department_id} → ${targetDepartmentId}${targetUserId ? `（指定人）` : ''}`);
+
+  res.json({ message: '转交成功' });
+});
+
+// 接收协同办件
+router.post('/:id/receive', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { comment } = req.body;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前状态不支持接收' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权接收其他科室的办件' });
+  }
+
+  if (caseItem.current_handler_id && caseItem.current_handler_id !== req.user!.id) {
+    return res.status(400).json({ message: '该办件已被其他人接收' });
+  }
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE cases SET current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(req.user!.id, id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
+        from_user_id, to_user_id, action, status, comment, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'receive', 'cross_department', ?, CURRENT_TIMESTAMP)
+    `).run(uuidv4(), id, caseItem.department_id, caseItem.department_id, 
+      null, req.user!.id, comment || '已接收协同办件');
   });
 
   tx();
 
   db.prepare(`
     INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
-    VALUES (?, ?, ?, '跨科室流转', '办件管理', ?)
-  `).run(uuidv4(), req.user!.id, req.user!.name, `办件${caseItem.case_number} 跨科室流转：${caseItem.department_id} → ${to_department_id}`);
+    VALUES (?, ?, ?, '接收协同办件', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `接收办件：${caseItem.case_number}`);
 
-  res.json({ message: '流转成功' });
+  res.json({ message: '接收成功' });
+});
+
+// 退回协同办件
+router.post('/:id/return', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { comment } = req.body;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前状态不支持退回' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权退回其他科室的办件' });
+  }
+
+  if (caseItem.current_handler_id && caseItem.current_handler_id !== req.user!.id && req.user!.role !== 'admin') {
+    return res.status(403).json({ message: '只有当前处理人可以退回' });
+  }
+
+  const lastTransferFlow = db.prepare(`
+    SELECT * FROM case_flows 
+    WHERE case_id = ? AND action = 'transfer' 
+    ORDER BY created_at DESC LIMIT 1
+  `).get(id) as any;
+
+  if (!lastTransferFlow || !lastTransferFlow.from_department_id) {
+    return res.status(400).json({ message: '找不到来源科室，无法退回' });
+  }
+
+  const sourceDepartmentId = lastTransferFlow.from_department_id;
+  const sourceUserId = lastTransferFlow.from_user_id;
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE cases SET department_id = ?, status = 'reviewing', 
+        current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(sourceDepartmentId, sourceUserId || null, id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
+        from_user_id, to_user_id, action, status, comment, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'return', 'reviewing', ?, CURRENT_TIMESTAMP)
+    `).run(uuidv4(), id, caseItem.department_id, sourceDepartmentId, 
+      req.user!.id, sourceUserId, comment || '协同退回');
+  });
+
+  tx();
+
+  if (sourceUserId) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, title, content, related_id)
+      VALUES (?, ?, 'case', '协同办件已退回', ?, ?)
+    `).run(uuidv4(), sourceUserId, 
+      `办件${caseItem.case_number}已被退回`, id);
+  }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '协同退回', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, 
+    `办件${caseItem.case_number} 协同退回：${caseItem.department_id} → ${sourceDepartmentId}`);
+
+  res.json({ message: '退回成功' });
+});
+
+// 协同办结
+router.post('/:id/collaborate-complete', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { comment, result } = req.body;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前状态不支持协同办结' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权办结其他科室的办件' });
+  }
+
+  if (caseItem.current_handler_id && caseItem.current_handler_id !== req.user!.id && req.user!.role !== 'admin') {
+    return res.status(403).json({ message: '只有当前处理人可以办结' });
+  }
+
+  const lastTransferFlow = db.prepare(`
+    SELECT * FROM case_flows 
+    WHERE case_id = ? AND action = 'transfer' 
+    ORDER BY created_at DESC LIMIT 1
+  `).get(id) as any;
+
+  const sourceDepartmentId = lastTransferFlow?.from_department_id;
+  const sourceUserId = lastTransferFlow?.from_user_id;
+
+  const tx = db.transaction(() => {
+    if (sourceDepartmentId) {
+      db.prepare(`
+        UPDATE cases SET department_id = ?, status = 'reviewing', 
+          current_handler_id = ?, result = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(sourceDepartmentId, sourceUserId || null, result || comment || '协同办结', id);
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
+          from_user_id, to_user_id, action, status, comment, handled_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'collaborate_complete', 'reviewing', ?, CURRENT_TIMESTAMP)
+      `).run(uuidv4(), id, caseItem.department_id, sourceDepartmentId, 
+        req.user!.id, sourceUserId, comment || '协同办结');
+    } else {
+      db.prepare(`
+        UPDATE cases SET status = 'approved', current_handler_id = ?, 
+          result = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(req.user!.id, result || comment || '协同办结', id);
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
+          from_user_id, to_user_id, action, status, comment, handled_at)
+        VALUES (?, ?, ?, ?, ?, NULL, 'collaborate_complete', 'approved', ?, CURRENT_TIMESTAMP)
+      `).run(uuidv4(), id, caseItem.department_id, caseItem.department_id, 
+        req.user!.id, comment || '协同办结');
+    }
+  });
+
+  tx();
+
+  if (sourceUserId) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, title, content, related_id)
+      VALUES (?, ?, 'case', '协同办件已办结', ?, ?)
+    `).run(uuidv4(), sourceUserId, 
+      `办件${caseItem.case_number}协同办理完成`, id);
+  }
+
+  if (caseItem.user_id && !sourceDepartmentId) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, title, content, related_id)
+      VALUES (?, ?, 'case', '办件审批通过', ?, ?)
+    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已审批通过`, id);
+  }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '协同办结', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `协同办结办件：${caseItem.case_number}`);
+
+  res.json({ message: '协同办结成功' });
+});
+
+// 协同待办列表（增强版，支持多维度筛选）
+router.get('/collaboration/todo', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { keyword, type = 'all', page = 1, pageSize = 20 } = req.query as any;
+  
+  let sql = `
+    SELECT c.*, si.name as service_item_name, si.code as service_item_code,
+      d.name as department_name, u.name as user_name, u.phone as user_phone,
+      handler.name as handler_name,
+      cf.from_department_id as from_department_id,
+      from_d.name as from_department_name,
+      cf.from_user_id as transfer_from_user_id,
+      from_u.name as transfer_from_user_name,
+      cf.comment as transfer_comment,
+      cf.created_at as transfer_time
+    FROM cases c
+    LEFT JOIN service_items si ON c.service_item_id = si.id
+    LEFT JOIN departments d ON c.department_id = d.id
+    LEFT JOIN users u ON c.user_id = u.id
+    LEFT JOIN users handler ON c.current_handler_id = handler.id
+    LEFT JOIN case_flows cf ON cf.id = (
+      SELECT id FROM case_flows 
+      WHERE case_id = c.id AND action = 'transfer' 
+      ORDER BY created_at DESC LIMIT 1
+    )
+    LEFT JOIN departments from_d ON cf.from_department_id = from_d.id
+    LEFT JOIN users from_u ON cf.from_user_id = from_u.id
+    WHERE c.status = 'cross_department'
+  `;
+  const params: any[] = [];
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    sql += ' AND c.department_id = ?';
+    params.push(req.user!.department_id);
+  }
+
+  if (type === 'pending_receive') {
+    sql += ' AND c.current_handler_id IS NULL';
+  } else if (type === 'mine') {
+    sql += ' AND c.current_handler_id = ?';
+    params.push(req.user!.id);
+  } else if (type === 'initiated') {
+    sql += ' AND cf.from_user_id = ?';
+    params.push(req.user!.id);
+  }
+
+  if (keyword) {
+    sql += ' AND (c.case_number LIKE ? OR c.applicant_name LIKE ? OR u.name LIKE ?)';
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const total = db.prepare(sql.replace(
+    'SELECT c.*, si.name as service_item_name, si.code as service_item_code, d.name as department_name, u.name as user_name, u.phone as user_phone, handler.name as handler_name, cf.from_department_id as from_department_id, from_d.name as from_department_name, cf.from_user_id as transfer_from_user_id, from_u.name as transfer_from_user_name, cf.comment as transfer_comment, cf.created_at as transfer_time',
+    'SELECT COUNT(*) as count'
+  )).get(...params) as any;
+
+  sql += ' ORDER BY c.updated_at DESC LIMIT ? OFFSET ?';
+  params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
+
+  const cases = db.prepare(sql).all(...params);
+
+  res.json({ cases, total: total.count, page: Number(page), pageSize: Number(pageSize) });
+});
+
+// 协同待办统计（各类型数量）
+router.get('/collaboration/stats', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const userId = req.user!.id;
+  const deptId = req.user!.department_id;
+  const isApprover = req.user!.role === 'approver';
+
+  let baseSql = `
+    FROM cases c
+    LEFT JOIN case_flows cf ON cf.id = (
+      SELECT id FROM case_flows 
+      WHERE case_id = c.id AND action = 'transfer' 
+      ORDER BY created_at DESC LIMIT 1
+    )
+    WHERE c.status = 'cross_department'
+  `;
+  const deptCondition = isApprover && deptId ? ' AND c.department_id = ?' : '';
+  const deptParams = isApprover && deptId ? [deptId] : [];
+
+  const total = db.prepare(`SELECT COUNT(*) as count ${baseSql} ${deptCondition}`).get(...deptParams) as any;
+
+  const pendingReceive = db.prepare(
+    `SELECT COUNT(*) as count ${baseSql} ${deptCondition} AND c.current_handler_id IS NULL`
+  ).get(...deptParams) as any;
+
+  const mine = db.prepare(
+    `SELECT COUNT(*) as count ${baseSql} ${deptCondition} AND c.current_handler_id = ?`
+  ).get(...[...deptParams, userId]) as any;
+
+  const initiated = db.prepare(
+    `SELECT COUNT(*) as count ${baseSql} AND cf.from_user_id = ?`
+  ).get(userId) as any;
+
+  res.json({
+    total: total.count,
+    pending_receive: pendingReceive.count,
+    mine: mine.count,
+    initiated: initiated.count,
+  });
+});
+
+// 获取科室审批人员列表
+router.get('/department/:department_id/approvers', requireRoles('approver', 'admin', 'window'), (req: AuthRequest, res) => {
+  const { department_id } = req.params;
+  
+  const users = db.prepare(`
+    SELECT id, name, username, department_id, role, status, avatar
+    FROM users 
+    WHERE department_id = ? AND role = 'approver' AND status = 'active'
+    ORDER BY name
+  `).all(department_id);
+
+  res.json({ users });
 });
 
 // 添加材料

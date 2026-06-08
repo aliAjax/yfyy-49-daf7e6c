@@ -1,12 +1,16 @@
-import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin, Tag, Descriptions, Space, List } from 'antd';
-import { SearchOutlined, CalendarOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { Card, Row, Col, Input, Select, Button, Modal, Form, DatePicker, message, Spin, Tag, Descriptions, Space, List, Popconfirm } from 'antd';
+import { SearchOutlined, CalendarOutlined, InfoCircleOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import api from '../../api';
 import type { ServiceItem, ServiceItemMaterial } from '../../types';
 import { getServiceItemMaterialList, hasServiceItemMaterials } from '../../utils/materials';
 import dayjs from 'dayjs';
+import { useAuthStore } from '../../store/auth';
+import { useFavoriteStore } from '../../store/favorite';
 
 function CitizenServices() {
+  const { isAuthenticated } = useAuthStore();
+  const { favoritedIds, addFavorite, removeFavorite, loading: favoriteLoading } = useFavoriteStore();
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -22,6 +26,8 @@ function CitizenServices() {
   const [detailVisible, setDetailVisible] = useState(false);
   const [detailService, setDetailService] = useState<ServiceItem | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  const [favoriteLoadingId, setFavoriteLoadingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadServices();
@@ -55,6 +61,34 @@ function CitizenServices() {
       setDepartments(res.departments || []);
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const handleFavorite = async (service: ServiceItem) => {
+    if (!isAuthenticated) {
+      message.info('请先登录后再收藏');
+      return;
+    }
+    if (service.status !== 'active') {
+      message.warning('该服务事项已停用，无法收藏');
+      return;
+    }
+
+    const isFavorited = favoritedIds.has(service.id);
+    setFavoriteLoadingId(service.id);
+
+    try {
+      if (isFavorited) {
+        await removeFavorite(service.id);
+        message.success('已取消收藏');
+      } else {
+        await addFavorite(service.id);
+        message.success('收藏成功');
+      }
+    } catch (error: any) {
+      console.error(error);
+    } finally {
+      setFavoriteLoadingId(null);
     }
   };
 
@@ -167,7 +201,33 @@ function CitizenServices() {
                 hoverable
                 className="service-card"
                 title={item.name}
-                extra={<span style={{ fontSize: 12, color: '#999' }}>{item.code}</span>}
+                extra={
+                  <span style={{ fontSize: 12, color: '#999' }}>{item.code}</span>
+                }
+                actions={[
+                  <Button
+                    type="text"
+                    icon={<InfoCircleOutlined />}
+                    onClick={() => handleViewDetail(item)}
+                  >
+                    查看详情
+                  </Button>,
+                  <Button
+                    type="text"
+                    icon={<CalendarOutlined />}
+                    onClick={() => handleAppointment(item)}
+                  >
+                    立即预约
+                  </Button>,
+                  <Button
+                    type="text"
+                    icon={favoritedIds.has(item.id) ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+                    loading={favoriteLoadingId === item.id}
+                    onClick={() => handleFavorite(item)}
+                  >
+                    {favoritedIds.has(item.id) ? '已收藏' : '收藏'}
+                  </Button>,
+                ]}
               >
                 <div style={{ minHeight: 60, marginBottom: 12 }}>
                   <p style={{ color: '#666', fontSize: 13, lineHeight: 1.6 }}>
@@ -181,23 +241,6 @@ function CitizenServices() {
                   <br />
                   <span>费用：{item.fee ? `¥${item.fee}` : '免费'}</span>
                 </div>
-                <Space style={{ width: '100%' }}>
-                  <Button
-                    style={{ flex: 1 }}
-                    icon={<InfoCircleOutlined />}
-                    onClick={() => handleViewDetail(item)}
-                  >
-                    查看详情
-                  </Button>
-                  <Button
-                    type="primary"
-                    style={{ flex: 1 }}
-                    icon={<CalendarOutlined />}
-                    onClick={() => handleAppointment(item)}
-                  >
-                    立即预约
-                  </Button>
-                </Space>
               </Card>
             </Col>
           ))}
@@ -298,6 +341,16 @@ function CitizenServices() {
           <Button key="close" onClick={() => setDetailVisible(false)}>
             关闭
           </Button>,
+          isAuthenticated && detailService && detailService.status === 'active' && (
+            <Button
+              key="favorite"
+              icon={favoritedIds.has(detailService.id) ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+              loading={favoriteLoadingId === detailService.id}
+              onClick={() => detailService && handleFavorite(detailService)}
+            >
+              {favoritedIds.has(detailService.id) ? '已收藏' : '收藏'}
+            </Button>
+          ),
           <Button
             key="appointment"
             type="primary"
@@ -328,6 +381,11 @@ function CitizenServices() {
                 </Descriptions.Item>
                 <Descriptions.Item label="费用">
                   {detailService.fee ? `¥${detailService.fee}` : '免费'}
+                </Descriptions.Item>
+                <Descriptions.Item label="状态">
+                  <Tag color={detailService.status === 'active' ? 'green' : 'default'}>
+                    {detailService.status === 'active' ? '启用' : '停用'}
+                  </Tag>
                 </Descriptions.Item>
               </Descriptions>
 
