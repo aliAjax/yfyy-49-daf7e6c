@@ -8,16 +8,40 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRoles('admin', 'window', 'approver'));
 
+function applyCaseScope(req: AuthRequest, where: string, params: any[], alias = 'c') {
+  const prefix = alias ? `${alias}.` : '';
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    return {
+      where: `${where} AND ${prefix}department_id = ?`,
+      params: [...params, req.user!.department_id],
+    };
+  }
+
+  if (req.user!.role === 'window') {
+    if (!req.user!.department_id) {
+      return { where: `${where} AND 1=0`, params };
+    }
+
+    return {
+      where: `${where} AND ${prefix}window_id IN (SELECT id FROM windows WHERE department_id = ?)`,
+      params: [...params, req.user!.department_id],
+    };
+  }
+
+  return { where, params };
+}
+
 router.get('/stats', (req: AuthRequest, res) => {
   const { department_id } = req.query as any;
   
   let caseWhere = 'WHERE 1=1';
   const params: any[] = [];
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
-    caseWhere += ' AND c.department_id = ?';
-    params.push(req.user!.department_id);
-  }
+  const scopedCases = applyCaseScope(req, caseWhere, params);
+  caseWhere = scopedCases.where;
+  params.push(...scopedCases.params);
+
   if (department_id && req.user!.role === 'admin') {
     caseWhere += ' AND c.department_id = ?';
     params.push(department_id);
@@ -44,10 +68,10 @@ router.get('/stats', (req: AuthRequest, res) => {
   let evalWhere = 'WHERE 1=1';
   const evalParams: any[] = [];
   
-  if (req.user!.role === 'approver' && req.user!.department_id) {
-    evalWhere += ' AND c.department_id = ?';
-    evalParams.push(req.user!.department_id);
-  }
+  const scopedEvaluations = applyCaseScope(req, evalWhere, evalParams);
+  evalWhere = scopedEvaluations.where;
+  evalParams.push(...scopedEvaluations.params);
+
   if (department_id && req.user!.role === 'admin') {
     evalWhere += ' AND c.department_id = ?';
     evalParams.push(department_id);
@@ -92,10 +116,10 @@ router.get('/trend', (req: AuthRequest, res) => {
     let sql = 'SELECT COUNT(*) as count FROM cases WHERE DATE(created_at) = ?';
     const params: any[] = [date];
 
-    if (req.user!.role === 'approver' && req.user!.department_id) {
-      sql += ' AND department_id = ?';
-      params.push(req.user!.department_id);
-    }
+    const scoped = applyCaseScope(req, sql, params, '');
+    sql = scoped.where;
+    params.splice(0, params.length, ...scoped.params);
+
     if (department_id && req.user!.role === 'admin') {
       sql += ' AND department_id = ?';
       params.push(department_id);
@@ -119,6 +143,14 @@ router.get('/department-stats', (req: AuthRequest, res) => {
   if (req.user!.role === 'approver' && req.user!.department_id) {
     where += ' AND d.id = ?';
     params.push(req.user!.department_id);
+  }
+  if (req.user!.role === 'window') {
+    if (req.user!.department_id) {
+      where += ' AND c.window_id IN (SELECT id FROM windows WHERE department_id = ?)';
+      params.push(req.user!.department_id);
+    } else {
+      where += ' AND 1=0';
+    }
   }
   if (start_date) {
     where += ' AND DATE(c.created_at) >= ?';
@@ -153,10 +185,9 @@ router.get('/recent-cases', (req: AuthRequest, res) => {
   let where = 'WHERE 1=1';
   const params: any[] = [];
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
-    where += ' AND c.department_id = ?';
-    params.push(req.user!.department_id);
-  }
+  const scopedCases = applyCaseScope(req, where, params);
+  where = scopedCases.where;
+  params.push(...scopedCases.params);
 
   const cases = db.prepare(`
     SELECT 
@@ -185,10 +216,10 @@ router.get('/quick-stats', (req: AuthRequest, res) => {
   let where = 'WHERE 1=1';
   const params: any[] = [];
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
-    where += ' AND department_id = ?';
-    params.push(req.user!.department_id);
-  }
+  const scopedCases = applyCaseScope(req, where, params, '');
+  where = scopedCases.where;
+  params.push(...scopedCases.params);
+
   if (department_id && req.user!.role === 'admin') {
     where += ' AND department_id = ?';
     params.push(department_id);
@@ -208,16 +239,27 @@ router.get('/quick-stats', (req: AuthRequest, res) => {
     LEFT JOIN service_items si ON a.service_item_id = si.id
     WHERE a.appointment_date = ?
     ${req.user!.role === 'approver' && req.user!.department_id ? 'AND si.department_id = ?' : ''}
-  `).get(today, ...(req.user!.role === 'approver' && req.user!.department_id ? [req.user!.department_id] : [])) as any;
+    ${req.user!.role === 'window' && req.user!.department_id ? 'AND si.window_id IN (SELECT id FROM windows WHERE department_id = ?)' : ''}
+    ${req.user!.role === 'window' && !req.user!.department_id ? 'AND 1=0' : ''}
+  `).get(
+    today,
+    ...(req.user!.role === 'approver' && req.user!.department_id ? [req.user!.department_id] : []),
+    ...(req.user!.role === 'window' && req.user!.department_id ? [req.user!.department_id] : [])
+  ) as any;
+
+  let overdueWhere = `WHERE c.deadline IS NOT NULL 
+      AND c.deadline < datetime('now')
+      AND c.status NOT IN ('completed', 'rejected')`;
+  const overdueParams: any[] = [];
+  const scopedOverdue = applyCaseScope(req, overdueWhere, overdueParams);
+  overdueWhere = scopedOverdue.where;
+  overdueParams.push(...scopedOverdue.params);
 
   const overdueCount = db.prepare(`
     SELECT COUNT(*) as count 
     FROM cases c
-    WHERE c.deadline IS NOT NULL 
-      AND c.deadline < datetime('now')
-      AND c.status NOT IN ('completed', 'rejected')
-      ${req.user!.role === 'approver' && req.user!.department_id ? 'AND c.department_id = ?' : ''}
-  `).get(...(req.user!.role === 'approver' && req.user!.department_id ? [req.user!.department_id] : [])) as any;
+    ${overdueWhere}
+  `).get(...overdueParams) as any;
 
   res.json({
     status_stats: statusStats,
