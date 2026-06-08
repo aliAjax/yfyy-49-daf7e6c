@@ -17,6 +17,7 @@ import CitizenCases from '../pages/citizen/Cases';
 import CitizenCaseDetail from '../pages/citizen/CaseDetail';
 import CitizenEvaluations from '../pages/citizen/Evaluations';
 import CitizenProfile from '../pages/citizen/Profile';
+import CitizenNotifications from '../pages/citizen/Notifications';
 import { useEffect, useState } from 'react';
 import api from '../api';
 
@@ -52,6 +53,7 @@ function CitizenLayout() {
     { key: '/citizen/appointments', icon: <CalendarOutlined />, label: '我的预约' },
     { key: '/citizen/cases', icon: <FileTextOutlined />, label: '我的办件' },
     { key: '/citizen/evaluations', icon: <StarOutlined />, label: '我的评价' },
+    { key: '/citizen/notifications', icon: <BellOutlined />, label: '消息中心' },
     { key: '/citizen/profile', icon: <UserOutlined />, label: '个人中心' },
   ];
 
@@ -71,7 +73,12 @@ function CitizenLayout() {
         </div>
         <div className="header-right">
           <Badge count={unreadCount} size="small">
-            <Button type="text" icon={<BellOutlined />} style={{ color: 'white', fontSize: 18 }} />
+            <Button
+              type="text"
+              icon={<BellOutlined />}
+              style={{ color: 'white', fontSize: 18 }}
+              onClick={() => navigate('/citizen/notifications')}
+            />
           </Badge>
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
             <div className="user-info">
@@ -100,6 +107,7 @@ function CitizenLayout() {
               <Route path="/cases" element={<CitizenCases />} />
               <Route path="/cases/:id" element={<CitizenCaseDetail />} />
               <Route path="/evaluations" element={<CitizenEvaluations />} />
+              <Route path="/notifications" element={<CitizenNotifications onUnreadCountChange={fetchUnreadCount} />} />
               <Route path="/profile" element={<CitizenProfile />} />
             </Routes>
           </Content>

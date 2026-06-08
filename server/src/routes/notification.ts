@@ -8,7 +8,7 @@ router.use(authMiddleware);
 
 // 获取我的通知
 router.get('/my', (req: AuthRequest, res) => {
-  const { is_read, page = 1, pageSize = 20 } = req.query as any;
+  const { is_read, type, page = 1, pageSize = 20 } = req.query as any;
   
   let sql = 'SELECT * FROM notifications WHERE user_id = ?';
   const params: any[] = [req.user!.id];
@@ -16,6 +16,11 @@ router.get('/my', (req: AuthRequest, res) => {
   if (is_read !== undefined) {
     sql += ' AND is_read = ?';
     params.push(is_read === 'true' || is_read === '1' ? 1 : 0);
+  }
+
+  if (type) {
+    sql += ' AND type = ?';
+    params.push(type);
   }
 
   const total = db.prepare(sql.replace('SELECT *', 'SELECT COUNT(*) as count')).get(...params) as any;
@@ -37,6 +42,19 @@ router.get('/unread-count', (req: AuthRequest, res) => {
   res.json({ unread_count: result.count });
 });
 
+// 获取通知详情
+router.get('/:id', (req: AuthRequest, res) => {
+  const { id } = req.params;
+  
+  const notification = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id) as any;
+  
+  if (!notification || notification.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权查看此通知' });
+  }
+
+  res.json({ notification });
+});
+
 // 标记为已读
 router.post('/:id/read', (req: AuthRequest, res) => {
   const { id } = req.params;
@@ -50,6 +68,23 @@ router.post('/:id/read', (req: AuthRequest, res) => {
   db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
 
   res.json({ message: '标记成功' });
+});
+
+// 批量标记为已读
+router.post('/batch-read', (req: AuthRequest, res) => {
+  const { ids } = req.body;
+  
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: '请选择要标记的通知' });
+  }
+
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `UPDATE notifications SET is_read = 1 WHERE user_id = ? AND id IN (${placeholders})`;
+  const params = [req.user!.id, ...ids];
+  
+  db.prepare(sql).run(...params);
+
+  res.json({ message: '批量标记成功' });
 });
 
 // 全部标记为已读

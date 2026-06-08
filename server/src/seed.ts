@@ -252,6 +252,83 @@ function seed() {
   );
   console.log('   已创建 1 条示例评价\n');
 
+  console.log('8. 创建示例通知...');
+  const notifStmt = db.prepare(`
+    INSERT OR IGNORE INTO notifications 
+    (id, user_id, type, title, content, is_read, related_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const sampleNotifications = [
+    {
+      id: uuidv4(),
+      userId: users[6].id,
+      type: 'case',
+      title: '办件状态更新',
+      content: '您的营业执照办理申请已进入审批环节，请耐心等待。',
+      isRead: 0,
+      relatedId: sampleCases[0].id,
+      createdAt: dayjs().subtract(1, 'hour').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      userId: users[6].id,
+      type: 'case',
+      title: '材料需补正',
+      content: '您的食品经营许可证申请材料需补正，请及时补充相关材料。',
+      isRead: 0,
+      relatedId: sampleCases[2].id,
+      createdAt: dayjs().subtract(2, 'hour').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      userId: users[6].id,
+      type: 'appointment',
+      title: '预约成功',
+      content: '您已成功预约营业执照办理服务，请按时前往大厅办理。',
+      isRead: 1,
+      relatedId: null,
+      createdAt: dayjs().subtract(1, 'day').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      userId: users[6].id,
+      type: 'evaluation',
+      title: '评价提醒',
+      content: '您的身份证办理已完成，欢迎对我们的服务进行评价。',
+      isRead: 0,
+      relatedId: sampleCases[1].id,
+      createdAt: dayjs().subtract(3, 'day').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      userId: users[7].id,
+      type: 'case',
+      title: '办件已办结',
+      content: '您的身份证办理已完成，请前往大厅领取证件。',
+      isRead: 1,
+      relatedId: sampleCases[1].id,
+      createdAt: dayjs().subtract(5, 'day').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      userId: users[6].id,
+      type: 'case',
+      title: '受理通知',
+      content: '您提交的办件申请已受理，工作人员将尽快处理。',
+      isRead: 0,
+      relatedId: sampleCases[0].id,
+      createdAt: dayjs().subtract(30, 'minute').format('YYYY-MM-DD HH:mm:ss'),
+    },
+  ];
+
+  let notifCount = 0;
+  sampleNotifications.forEach(n => {
+    const result = notifStmt.run(n.id, n.userId, n.type, n.title, n.content, n.isRead, n.relatedId, n.createdAt);
+    if (result.changes > 0) notifCount++;
+  });
+  console.log(`   已创建 ${notifCount} 条示例通知\n`);
+
   console.log('✅ 种子数据初始化完成！');
   console.log('\n📋 默认账号列表：');
   console.log('   管理员  - admin / 123456');
