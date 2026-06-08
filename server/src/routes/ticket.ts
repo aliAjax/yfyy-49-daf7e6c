@@ -75,7 +75,7 @@ router.post('/issue', requireRoles('window', 'admin'), (req: AuthRequest, res) =
   }
 
   const serviceItem = db.prepare('SELECT * FROM service_items WHERE id = ? AND status = ?')
-    .get(service_item_id, 'active');
+    .get(service_item_id, 'active') as any;
   
   if (!serviceItem) {
     return res.status(400).json({ message: '服务事项不存在或已停用' });

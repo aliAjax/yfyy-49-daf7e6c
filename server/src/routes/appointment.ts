@@ -102,7 +102,7 @@ router.get('/:id', (req: AuthRequest, res) => {
     LEFT JOIN windows w ON si.window_id = w.id
     LEFT JOIN users u ON a.user_id = u.id
     WHERE a.id = ?
-  `).get(id);
+  `).get(id) as any;
 
   if (!appointment) {
     return res.status(404).json({ message: '预约不存在' });
@@ -128,7 +128,7 @@ router.post('/', (req: AuthRequest, res) => {
   }
 
   const serviceItem = db.prepare('SELECT * FROM service_items WHERE id = ? AND status = ?')
-    .get(service_item_id, 'active');
+    .get(service_item_id, 'active') as any;
   
   if (!serviceItem) {
     return res.status(400).json({ message: '服务事项不存在或已停用' });

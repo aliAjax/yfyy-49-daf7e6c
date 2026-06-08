@@ -8,7 +8,7 @@ if (!fs.existsSync(dbDir)) {
 }
 
 const dbPath = path.join(dbDir, 'gov-service.db');
-const db = new Database(dbPath);
+const db = new Database(dbPath) as any;
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

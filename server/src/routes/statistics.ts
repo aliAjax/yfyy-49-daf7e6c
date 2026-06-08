@@ -36,7 +36,7 @@ router.get('/overview', (req: AuthRequest, res) => {
   
   const statusCounts = db.prepare(`
     SELECT status, COUNT(*) as count FROM cases c ${caseWhere} GROUP BY status
-  `).all(...params);
+  `).all(...params) as any[];
 
   const completedCases = statusCounts.find((s: any) => s.status === 'completed')?.count || 0;
   const processingCases = totalCases.count - completedCases - 

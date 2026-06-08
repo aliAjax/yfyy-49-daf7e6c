@@ -9,6 +9,7 @@ import ticketRoutes from './routes/ticket';
 import caseRoutes from './routes/case';
 import evaluationRoutes from './routes/evaluation';
 import statisticsRoutes from './routes/statistics';
+import dashboardRoutes from './routes/dashboard';
 import notificationRoutes from './routes/notification';
 
 const app = express();
@@ -32,6 +33,7 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/cases', caseRoutes);
 app.use('/api/evaluations', evaluationRoutes);
 app.use('/api/statistics', statisticsRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/notifications', notificationRoutes);
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

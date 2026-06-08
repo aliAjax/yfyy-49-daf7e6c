@@ -130,7 +130,7 @@ router.get('/:id', (req: AuthRequest, res) => {
     LEFT JOIN users u ON c.user_id = u.id
     LEFT JOIN users handler ON c.current_handler_id = handler.id
     WHERE c.id = ?
-  `).get(id);
+  `).get(id) as any;
 
   if (!caseItem) {
     return res.status(404).json({ message: '办件不存在' });

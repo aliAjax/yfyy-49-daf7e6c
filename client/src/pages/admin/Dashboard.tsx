@@ -41,10 +41,10 @@ function AdminDashboard() {
     setLoading(true);
     try {
       const [statsRes, trendRes, deptRes, casesRes]: any = await Promise.all([
-        api.get('/admin/dashboard/stats'),
-        api.get('/admin/dashboard/trend'),
-        api.get('/admin/dashboard/department-stats'),
-        api.get('/admin/dashboard/recent-cases'),
+        api.get('/dashboard/stats'),
+        api.get('/dashboard/trend'),
+        api.get('/dashboard/department-stats'),
+        api.get('/dashboard/recent-cases'),
       ]);
 
       setStats(statsRes || {
