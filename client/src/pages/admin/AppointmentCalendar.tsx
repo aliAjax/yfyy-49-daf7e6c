@@ -16,6 +16,7 @@ import {
   Avatar,
   Typography,
   Tooltip,
+  message,
 } from 'antd';
 import {
   CalendarOutlined,
@@ -27,6 +28,7 @@ import {
   ReloadOutlined,
   LeftOutlined,
   RightOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import { useState, useEffect, useMemo } from 'react';
 import dayjs from 'dayjs';
@@ -59,6 +61,7 @@ function AppointmentCalendar() {
   const [dayAppointmentPage, setDayAppointmentPage] = useState(1);
   const [dayAppointmentTotal, setDayAppointmentTotal] = useState(0);
   const [dayAppointmentPageSize] = useState(20);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     loadDepartments();
@@ -163,6 +166,88 @@ function AppointmentCalendar() {
     setSelectedDate(date);
     setDayAppointmentPage(1);
     setDayModalVisible(true);
+  };
+
+  const fetchAllDayAppointments = async (date: string): Promise<DayAppointment[]> => {
+    const allResults: DayAppointment[] = [];
+    let currentPage = 1;
+    const fetchPageSize = 500;
+    let hasMore = true;
+
+    while (hasMore) {
+      const params: any = { date, page: currentPage, pageSize: fetchPageSize };
+      if (departmentId) {
+        params.department_id = departmentId;
+      }
+      if (serviceItemId) {
+        params.service_item_id = serviceItemId;
+      }
+      const res: DayAppointmentsResponse = await api.get('/appointments/calendar/day-appointments', { params });
+      allResults.push(...res.appointments);
+      if (allResults.length >= res.total || res.appointments.length < fetchPageSize) {
+        hasMore = false;
+      } else {
+        currentPage++;
+      }
+    }
+
+    return allResults;
+  };
+
+  const escapeCSV = (value: any): string => {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    const str = String(value);
+    if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const handleExportCSV = async () => {
+    if (!selectedDate) return;
+    setExporting(true);
+    try {
+      const allAppointments = await fetchAllDayAppointments(selectedDate);
+      if (allAppointments.length === 0) {
+        message.warning('当前筛选条件下暂无预约数据可导出');
+        return;
+      }
+
+      const headers = ['预约人', '联系电话', '事项', '科室', '时段', '状态'];
+      const rows = allAppointments.map((item) => [
+        item.applicant_name || '',
+        item.applicant_phone || '',
+        item.service_item_name || '',
+        item.department_name || '',
+        item.time_slot || '',
+        AppointmentStatusText[item.status as keyof typeof AppointmentStatusText] || item.status,
+      ]);
+
+      const csvContent = [
+        headers.map(escapeCSV).join(','),
+        ...rows.map((row) => row.map(escapeCSV).join(',')),
+      ].join('\r\n');
+
+      const BOM = '\uFEFF';
+      const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `预约名单_${selectedDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      message.success(`导出成功，共 ${allAppointments.length} 条预约记录`);
+    } catch (error) {
+      console.error('导出失败:', error);
+      message.error('导出失败，请稍后重试');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -602,6 +687,16 @@ function AppointmentCalendar() {
         open={dayModalVisible}
         onCancel={() => setDayModalVisible(false)}
         footer={[
+          <Button
+            key="export"
+            type="primary"
+            icon={<DownloadOutlined />}
+            onClick={handleExportCSV}
+            loading={exporting}
+            disabled={dayAppointmentTotal === 0}
+          >
+            导出预约名单
+          </Button>,
           <Button key="close" onClick={() => setDayModalVisible(false)}>
             关闭
           </Button>,
