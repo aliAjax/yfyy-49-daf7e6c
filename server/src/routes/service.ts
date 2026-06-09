@@ -411,14 +411,19 @@ router.get('/available-dates', (req: AuthRequest, res) => {
   const today = dayjs().format('YYYY-MM-DD');
   
   const sources = db.prepare(`
-    SELECT date, total_count, booked_count 
+    SELECT date, total_count, booked_count, time_slots
     FROM number_sources 
-    WHERE service_item_id = ? AND date >= ? AND booked_count < total_count
+    WHERE service_item_id = ? AND date >= ?
     ORDER BY date
     LIMIT 30
   `).all(service_item_id, today);
 
-  res.json({ dates: sources });
+  const dates = sources.map((s: any) => ({
+    ...s,
+    remaining_count: s.total_count - s.booked_count,
+  }));
+
+  res.json({ dates });
 });
 
 // 获取我的常用/推荐服务事项

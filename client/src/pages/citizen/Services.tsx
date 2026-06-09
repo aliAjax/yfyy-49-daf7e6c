@@ -200,6 +200,7 @@ function CitizenServices() {
         open={appointmentModalVisible}
         service={selectedService}
         onCancel={() => setAppointmentModalVisible(false)}
+        onSuccess={loadServices}
       />
 
       <Modal
