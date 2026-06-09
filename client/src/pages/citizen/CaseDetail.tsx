@@ -1,5 +1,5 @@
-import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space, Alert } from 'antd';
-import { ArrowLeftOutlined, StarOutlined, PrinterOutlined, UploadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space } from 'antd';
+import { ArrowLeftOutlined, StarOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -22,11 +22,8 @@ function CitizenCaseDetail() {
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [evalModalVisible, setEvalModalVisible] = useState(false);
   const [receiptVisible, setReceiptVisible] = useState(false);
-  const [correctionVisible, setCorrectionVisible] = useState(false);
-  const [correctionMaterials, setCorrectionMaterials] = useState<{ name: string; file_url: string }[]>([]);
   const [evalForm] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
-  const [correctionSubmitting, setCorrectionSubmitting] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -122,53 +119,6 @@ function CitizenCaseDetail() {
       console.error(error);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const handleOpenCorrection = () => {
-    setCorrectionMaterials([{ name: '', file_url: '' }]);
-    setCorrectionVisible(true);
-  };
-
-  const handleAddCorrectionMaterial = () => {
-    setCorrectionMaterials((prev) => [...prev, { name: '', file_url: '' }]);
-  };
-
-  const handleRemoveCorrectionMaterial = (index: number) => {
-    if (correctionMaterials.length <= 1) {
-      message.warning('至少需要一份材料');
-      return;
-    }
-    setCorrectionMaterials((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleCorrectionMaterialChange = (index: number, field: string, value: string) => {
-    setCorrectionMaterials((prev) => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      return updated;
-    });
-  };
-
-  const handleSubmitCorrection = async () => {
-    const validMaterials = correctionMaterials.filter((m) => m.name.trim());
-    if (validMaterials.length === 0) {
-      message.error('请至少填写一份材料名称');
-      return;
-    }
-
-    try {
-      setCorrectionSubmitting(true);
-      await api.post(`/cases/${id}/materials-correction`, {
-        materials: validMaterials,
-      });
-      message.success('材料补正成功，等待审核');
-      setCorrectionVisible(false);
-      loadCaseDetail();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setCorrectionSubmitting(false);
     }
   };
 
@@ -315,33 +265,14 @@ function CitizenCaseDetail() {
         </Card>
       )}
 
-      <Card
-        title="已提交材料"
-        style={{ marginBottom: 16 }}
-        extra={
-          caseData?.status === 'material_correction' && (
-            <Button type="primary" icon={<UploadOutlined />} onClick={handleOpenCorrection}>
-              补正材料
-            </Button>
-          )
-        }
-      >
-        {caseData?.status === 'material_correction' && (
-          <Alert
-            message="部分材料未通过审核，请根据审核意见补充或重新提交材料"
-            type="warning"
-            showIcon
-            style={{ marginBottom: 16 }}
-          />
-        )}
+      <Card title="已提交材料" style={{ marginBottom: 16 }}>
         {materials.length > 0 ? (
           materials.map((material, index) => (
             <div
               key={material.id}
               style={{
                 padding: '12px 16px',
-                border: material.status === 'rejected' ? '1px solid #ffccc7' : '1px solid #f0f0f0',
-                background: material.status === 'rejected' ? '#fff2f0' : 'transparent',
+                border: '1px solid #f0f0f0',
                 borderRadius: 4,
                 marginBottom: index < materials.length - 1 ? 8 : 0,
               }}
@@ -353,7 +284,7 @@ function CitizenCaseDetail() {
                 </Tag>
               </div>
               {material.review_comment && (
-                <div style={{ fontSize: 12, color: material.status === 'rejected' ? '#cf1322' : '#666', marginTop: 8 }}>
+                <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
                   审核意见：{material.review_comment}
                 </div>
               )}
@@ -450,78 +381,6 @@ function CitizenCaseDetail() {
             <TextArea rows={3} placeholder="请输入您的意见和建议（选填）" />
           </Form.Item>
         </Form>
-      </Modal>
-
-      <Modal
-        title="补正材料"
-        open={correctionVisible}
-        onCancel={() => setCorrectionVisible(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setCorrectionVisible(false)}>
-            取消
-          </Button>,
-          <Button key="submit" type="primary" loading={correctionSubmitting} onClick={handleSubmitCorrection}>
-            提交补正
-          </Button>,
-        ]}
-        width={600}
-        destroyOnClose
-      >
-        <div>
-          <Alert
-            message="请根据审核意见补充或修改相关材料，提交后将重新进入审核流程"
-            type="info"
-            showIcon
-            style={{ marginBottom: 16 }}
-          />
-          {correctionMaterials.map((mat, index) => (
-            <div
-              key={index}
-              style={{
-                padding: '12px 16px',
-                border: '1px solid #f0f0f0',
-                borderRadius: 4,
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <span style={{ fontWeight: 500 }}>材料 {index + 1}</span>
-                <Button
-                  type="text"
-                  danger
-                  size="small"
-                  icon={<DeleteOutlined />}
-                  onClick={() => handleRemoveCorrectionMaterial(index)}
-                >
-                  删除
-                </Button>
-              </div>
-              <Form layout="vertical">
-                <Form.Item
-                  label="材料名称"
-                  rules={[{ required: true, message: '请输入材料名称' }]}
-                  style={{ marginBottom: 12 }}
-                >
-                  <Input
-                    placeholder="请输入材料名称"
-                    value={mat.name}
-                    onChange={(e) => handleCorrectionMaterialChange(index, 'name', e.target.value)}
-                  />
-                </Form.Item>
-                <Form.Item label="材料链接（选填）" style={{ marginBottom: 0 }}>
-                  <Input
-                    placeholder="请输入材料文件URL（选填）"
-                    value={mat.file_url}
-                    onChange={(e) => handleCorrectionMaterialChange(index, 'file_url', e.target.value)}
-                  />
-                </Form.Item>
-              </Form>
-            </div>
-          ))}
-          <Button type="dashed" block icon={<PlusOutlined />} onClick={handleAddCorrectionMaterial}>
-            添加更多材料
-          </Button>
-        </div>
       </Modal>
 
       <Modal

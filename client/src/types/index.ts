@@ -358,7 +358,6 @@ export const RoleText: Record<UserRole, string> = {
 export type CaseFlowAction = 
   | 'submit'
   | 'material_review'
-  | 'material_correction'
   | 'accept'
   | 'approve'
   | 'reject'
@@ -371,7 +370,6 @@ export type CaseFlowAction =
 export const CaseFlowActionText: Record<string, string> = {
   submit: '提交申请',
   material_review: '材料审核',
-  material_correction: '材料补正',
   accept: '受理',
   approve: '审批通过',
   reject: '审批驳回',

@@ -1,5 +1,5 @@
-import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Tooltip, Radio } from 'antd';
-import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined, AuditOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Select, Input, Modal, Form, Input as AntInput, Tag, message, Space, Descriptions, Row, Col, Statistic, List, Tooltip } from 'antd';
+import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined, FileTextOutlined, ClockCircleOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -36,16 +36,6 @@ function CaseReview() {
   const [transferForm] = Form.useForm();
   const [pendingCount, setPendingCount] = useState(0);
   const [approvers, setApprovers] = useState<User[]>([]);
-  const [loadStatus, setLoadStatus] = useState<string>('');
-  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
-  const [batchReviewVisible, setBatchReviewVisible] = useState(false);
-  const [batchReviews, setBatchReviews] = useState<Record<string, { status: string; review_comment: string }>>({});
-  const [batchSubmitting, setBatchSubmitting] = useState(false);
-  const [singleReviewVisible, setSingleReviewVisible] = useState(false);
-  const [singleReviewMaterial, setSingleReviewMaterial] = useState<CaseMaterial | null>(null);
-  const [singleReviewStatus, setSingleReviewStatus] = useState<'approved' | 'rejected'>('approved');
-  const [singleReviewComment, setSingleReviewComment] = useState('');
-  const [singleReviewSubmitting, setSingleReviewSubmitting] = useState(false);
 
   useEffect(() => {
     loadDepartments();
@@ -65,14 +55,10 @@ function CaseReview() {
     setLoading(true);
     try {
       const params: any = {
+        status: 'reviewing',
         page,
         pageSize,
       };
-      if (loadStatus && loadStatus !== 'all') {
-        params.status = loadStatus;
-      } else if (!loadStatus) {
-        params.status = 'reviewing';
-      }
       if (keyword) params.keyword = keyword;
       if (serviceItemId) params.service_item_id = serviceItemId;
 
@@ -95,7 +81,6 @@ function CaseReview() {
   const handleReset = () => {
     setKeyword('');
     setServiceItemId('');
-    setLoadStatus('');
     setPage(1);
     loadCases();
   };
@@ -197,102 +182,6 @@ function CaseReview() {
       console.error(error);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const getPendingMaterials = () => {
-    return caseMaterials.filter((m) => m.status === 'pending');
-  };
-
-  const handleSelectMaterials = (ids: string[]) => {
-    setSelectedMaterialIds(ids);
-  };
-
-  const handleOpenBatchReview = () => {
-    if (selectedMaterialIds.length === 0) {
-      message.warning('请先勾选要审核的材料');
-      return;
-    }
-    const initialReviews: Record<string, { status: string; review_comment: string }> = {};
-    selectedMaterialIds.forEach((id) => {
-      initialReviews[id] = { status: 'approved', review_comment: '' };
-    });
-    setBatchReviews(initialReviews);
-    setBatchReviewVisible(true);
-  };
-
-  const handleBatchReviewChange = (materialId: string, field: string, value: string) => {
-    setBatchReviews((prev) => ({
-      ...prev,
-      [materialId]: {
-        ...prev[materialId],
-        [field]: value,
-      },
-    }));
-  };
-
-  const handleBatchReviewSubmit = async () => {
-    const reviews = Object.entries(batchReviews).map(([material_id, review]) => ({
-      material_id,
-      status: review.status,
-      review_comment: review.review_comment,
-    }));
-
-    for (const review of reviews) {
-      if (review.status === 'rejected' && !review.review_comment.trim()) {
-        const material = caseMaterials.find((m) => m.id === review.material_id);
-        message.error(`驳回材料「${material?.name || ''}」必须填写审核意见`);
-        return;
-      }
-    }
-
-    try {
-      setBatchSubmitting(true);
-      await api.post(`/cases/${currentCase?.id}/material-batch-review`, { reviews });
-      message.success(`批量审核${reviews.length}份材料完成`);
-      setBatchReviewVisible(false);
-      setSelectedMaterialIds([]);
-      if (currentCase) {
-        handleViewDetail(currentCase);
-      }
-      loadCases();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setBatchSubmitting(false);
-    }
-  };
-
-  const handleOpenSingleReview = (material: CaseMaterial, status: 'approved' | 'rejected') => {
-    setSingleReviewMaterial(material);
-    setSingleReviewStatus(status);
-    setSingleReviewComment('');
-    setSingleReviewVisible(true);
-  };
-
-  const handleSingleReviewSubmit = async () => {
-    if (singleReviewStatus === 'rejected' && !singleReviewComment.trim()) {
-      message.error('驳回材料必须填写审核意见');
-      return;
-    }
-    try {
-      setSingleReviewSubmitting(true);
-      await api.post(`/cases/${currentCase?.id}/material-review-single`, {
-        material_id: singleReviewMaterial?.id,
-        status: singleReviewStatus,
-        review_comment: singleReviewComment,
-      });
-      message.success(`材料「${singleReviewMaterial?.name}」${singleReviewStatus === 'approved' ? '审核通过' : '已驳回'}`);
-      setSingleReviewVisible(false);
-      setSelectedMaterialIds([]);
-      if (currentCase) {
-        handleViewDetail(currentCase);
-      }
-      loadCases();
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setSingleReviewSubmitting(false);
     }
   };
 
@@ -446,19 +335,6 @@ function CaseReview() {
             allowClear
             onPressEnter={handleSearch}
           />
-          <Select
-            placeholder="选择状态"
-            value={loadStatus || undefined}
-            onChange={setLoadStatus}
-            style={{ width: 150 }}
-            allowClear
-          >
-            <Select.Option value="all">全部状态</Select.Option>
-            <Select.Option value="reviewing">审批中</Select.Option>
-            <Select.Option value="submitted">已提交</Select.Option>
-            <Select.Option value="material_reviewing">材料审核中</Select.Option>
-            <Select.Option value="material_correction">材料需补正</Select.Option>
-          </Select>
           <Button type="primary" onClick={handleSearch} icon={<SearchOutlined />}>
             搜索
           </Button>
@@ -493,31 +369,13 @@ function CaseReview() {
       <Modal
         title="办件详情"
         open={detailVisible}
-        onCancel={() => {
-          setDetailVisible(false);
-          setSelectedMaterialIds([]);
-        }}
+        onCancel={() => setDetailVisible(false)}
         footer={[
-          <Button key="close" onClick={() => {
-            setDetailVisible(false);
-            setSelectedMaterialIds([]);
-          }}>
+          <Button key="close" onClick={() => setDetailVisible(false)}>
             关闭
           </Button>,
-          currentCase && ['submitted', 'material_correction', 'material_reviewing'].includes(currentCase.status) && getPendingMaterials().length > 0 && (
-            <Button
-              key="batch-review"
-              type="primary"
-              icon={<AuditOutlined />}
-              onClick={handleOpenBatchReview}
-              disabled={selectedMaterialIds.length === 0}
-            >
-              批量审核{selectedMaterialIds.length > 0 ? `(${selectedMaterialIds.length})` : ''}
-            </Button>
-          ),
           <Button key="receipt" icon={<PrinterOutlined />} onClick={() => {
             setDetailVisible(false);
-            setSelectedMaterialIds([]);
             if (currentCase) {
               handleViewReceipt(currentCase);
             }
@@ -590,29 +448,11 @@ function CaseReview() {
 
             {caseMaterials.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>
-                  已提交材料
-                  {currentCase && ['submitted', 'material_correction', 'material_reviewing'].includes(currentCase.status) && getPendingMaterials().length > 0 && (
-                    <span style={{ fontSize: 12, color: '#999', marginLeft: 8, fontWeight: 'normal' }}>
-                      （可勾选待审核材料进行批量审核）
-                    </span>
-                  )}
-                </h4>
+                <h4 style={{ marginBottom: 8 }}>已提交材料</h4>
                 <Table
                   size="small"
                   dataSource={caseMaterials}
                   rowKey="id"
-                  rowSelection={
-                    currentCase && ['submitted', 'material_correction', 'material_reviewing'].includes(currentCase.status)
-                      ? {
-                          selectedRowKeys: selectedMaterialIds,
-                          onChange: (keys) => handleSelectMaterials(keys as string[]),
-                          getCheckboxProps: (record: CaseMaterial) => ({
-                            disabled: record.status !== 'pending',
-                          }),
-                        }
-                      : undefined
-                  }
                   columns={[
                     { title: '材料名称', dataIndex: 'name', key: 'name' },
                     {
@@ -621,49 +461,15 @@ function CaseReview() {
                       key: 'status',
                       width: 100,
                       render: (s: string) => {
-                        const map: Record<string, { text: string; color: string }> = {
-                          pending: { text: '待审核', color: 'orange' },
-                          approved: { text: '通过', color: 'green' },
-                          rejected: { text: '不通过', color: 'red' },
+                        const map: Record<string, string> = {
+                          pending: '待审核',
+                          approved: '通过',
+                          rejected: '不通过',
                         };
-                        const info = map[s] || { text: s, color: 'default' };
-                        return <Tag color={info.color}>{info.text}</Tag>;
+                        return <Tag>{map[s] || s}</Tag>;
                       },
                     },
                     { title: '审核意见', dataIndex: 'review_comment', key: 'review_comment' },
-                    {
-                      title: '操作',
-                      key: 'action',
-                      width: 150,
-                      render: (_: any, record: CaseMaterial) => {
-                        if (record.status !== 'pending' || !currentCase || !['submitted', 'material_correction', 'material_reviewing'].includes(currentCase.status)) {
-                          return <span style={{ color: '#bfbfbf', fontSize: 12 }}>-</span>;
-                        }
-                        return (
-                          <Space size="small">
-                            <Button
-                              type="link"
-                              size="small"
-                              icon={<CheckCircleOutlined />}
-                              style={{ color: '#52c41a', padding: 0 }}
-                              onClick={() => handleOpenSingleReview(record, 'approved')}
-                            >
-                              通过
-                            </Button>
-                            <Button
-                              type="link"
-                              size="small"
-                              danger
-                              icon={<CloseCircleOutlined />}
-                              style={{ padding: 0 }}
-                              onClick={() => handleOpenSingleReview(record, 'rejected')}
-                            >
-                              驳回
-                            </Button>
-                          </Space>
-                        );
-                      },
-                    },
                   ]}
                   pagination={false}
                 />
@@ -843,116 +649,6 @@ function CaseReview() {
             onClose={() => setReceiptVisible(false)}
           />
         )}
-      </Modal>
-
-      <Modal
-        title={`批量审核材料（${selectedMaterialIds.length}份）`}
-        open={batchReviewVisible}
-        onCancel={() => setBatchReviewVisible(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setBatchReviewVisible(false)}>
-            取消
-          </Button>,
-          <Button
-            key="submit"
-            type="primary"
-            loading={batchSubmitting}
-            onClick={handleBatchReviewSubmit}
-          >
-            提交审核
-          </Button>,
-        ]}
-        width={700}
-        destroyOnClose
-      >
-        <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-          {selectedMaterialIds.map((materialId) => {
-            const material = caseMaterials.find((m) => m.id === materialId);
-            const review = batchReviews[materialId];
-            if (!material || !review) return null;
-            return (
-              <div
-                key={materialId}
-                style={{
-                  padding: '12px 16px',
-                  border: '1px solid #f0f0f0',
-                  borderRadius: 4,
-                  marginBottom: 12,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <span style={{ fontWeight: 500 }}>{material.name}</span>
-                  <Radio.Group
-                    value={review.status}
-                    onChange={(e) => handleBatchReviewChange(materialId, 'status', e.target.value)}
-                  >
-                    <Radio.Button value="approved">通过</Radio.Button>
-                    <Radio.Button value="rejected">驳回</Radio.Button>
-                  </Radio.Group>
-                </div>
-                <Input.TextArea
-                  rows={2}
-                  placeholder={review.status === 'rejected' ? '请填写驳回原因（必填）' : '请输入审核意见（选填）'}
-                  value={review.review_comment}
-                  onChange={(e) => handleBatchReviewChange(materialId, 'review_comment', e.target.value)}
-                  status={review.status === 'rejected' && !review.review_comment.trim() ? 'error' : undefined}
-                />
-                {review.status === 'rejected' && !review.review_comment.trim() && (
-                  <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
-                    驳回材料必须填写审核意见
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </Modal>
-
-      <Modal
-        title={`审核材料：${singleReviewMaterial?.name || ''}`}
-        open={singleReviewVisible}
-        onCancel={() => setSingleReviewVisible(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setSingleReviewVisible(false)}>
-            取消
-          </Button>,
-          <Button
-            key="submit"
-            type={singleReviewStatus === 'approved' ? 'primary' : 'primary'}
-            danger={singleReviewStatus === 'rejected'}
-            loading={singleReviewSubmitting}
-            onClick={handleSingleReviewSubmit}
-          >
-            确认{singleReviewStatus === 'approved' ? '通过' : '驳回'}
-          </Button>,
-        ]}
-        width={500}
-        destroyOnClose
-      >
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ marginBottom: 12 }}>
-            <span style={{ marginRight: 12 }}>审核结果：</span>
-            <Radio.Group
-              value={singleReviewStatus}
-              onChange={(e) => setSingleReviewStatus(e.target.value)}
-            >
-              <Radio.Button value="approved">通过</Radio.Button>
-              <Radio.Button value="rejected">驳回</Radio.Button>
-            </Radio.Group>
-          </div>
-          <Input.TextArea
-            rows={4}
-            placeholder={singleReviewStatus === 'rejected' ? '请填写驳回原因（必填）' : '请输入审核意见（选填）'}
-            value={singleReviewComment}
-            onChange={(e) => setSingleReviewComment(e.target.value)}
-            status={singleReviewStatus === 'rejected' && !singleReviewComment.trim() ? 'error' : undefined}
-          />
-          {singleReviewStatus === 'rejected' && !singleReviewComment.trim() && (
-            <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>
-              驳回材料必须填写审核意见
-            </div>
-          )}
-        </div>
       </Modal>
     </div>
   );

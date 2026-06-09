@@ -17,7 +17,6 @@ import {
   Typography,
   Tooltip,
   message,
-  Popconfirm,
 } from 'antd';
 import {
   CalendarOutlined,
@@ -30,13 +29,10 @@ import {
   LeftOutlined,
   RightOutlined,
   DownloadOutlined,
-  PrinterOutlined,
-  StopOutlined,
 } from '@ant-design/icons';
 import { useState, useEffect, useMemo } from 'react';
 import dayjs from 'dayjs';
 import api from '../../api';
-import { useAuthStore } from '../../store/auth';
 import type {
   CalendarOverview,
   CalendarDay,
@@ -50,7 +46,6 @@ import { AppointmentStatusText } from '../../types';
 const { Title, Text } = Typography;
 
 function AppointmentCalendar() {
-  const { user } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [calendarData, setCalendarData] = useState<CalendarOverview | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -66,10 +61,7 @@ function AppointmentCalendar() {
   const [dayAppointmentPage, setDayAppointmentPage] = useState(1);
   const [dayAppointmentTotal, setDayAppointmentTotal] = useState(0);
   const [dayAppointmentPageSize] = useState(20);
-  const [dayStatusFilter, setDayStatusFilter] = useState<string>('');
   const [exporting, setExporting] = useState(false);
-  const [checkingInId, setCheckingInId] = useState<string>('');
-  const [cancellingId, setCancellingId] = useState<string>('');
 
   useEffect(() => {
     loadDepartments();
@@ -81,14 +73,7 @@ function AppointmentCalendar() {
     if (dayModalVisible && selectedDate) {
       loadDayAppointments(selectedDate);
     }
-  }, [dayModalVisible, selectedDate, dayAppointmentPage, dayStatusFilter]);
-
-  useEffect(() => {
-    if (dayModalVisible) {
-      setDayStatusFilter('');
-      setDayAppointmentPage(1);
-    }
-  }, [dayModalVisible]);
+  }, [dayModalVisible, selectedDate, dayAppointmentPage]);
 
   const loadDepartments = async () => {
     try {
@@ -150,9 +135,6 @@ function AppointmentCalendar() {
       if (serviceItemId) {
         params.service_item_id = serviceItemId;
       }
-      if (dayStatusFilter) {
-        params.status = dayStatusFilter;
-      }
       const res: DayAppointmentsResponse = await api.get('/appointments/calendar/day-appointments', { params });
       setDayAppointments(res.appointments);
       setDayAppointmentTotal(res.total);
@@ -180,42 +162,6 @@ function AppointmentCalendar() {
     loadCalendarData();
   };
 
-  const canCheckIn = (record: DayAppointment): boolean => {
-    if (record.status !== 'confirmed') return false;
-    if (dayjs(record.appointment_date).isBefore(dayjs().format('YYYY-MM-DD'))) return false;
-    return true;
-  };
-
-  const canCancel = (record: DayAppointment): boolean => {
-    return record.status !== 'cancelled' && record.status !== 'completed';
-  };
-
-  const handleCheckIn = async (record: DayAppointment) => {
-    setCheckingInId(record.id);
-    try {
-      const res: any = await api.post(`/appointments/${record.id}/check-in`);
-      message.success(`签到取号成功！号票：${res.ticket.ticket_number}`);
-      loadDayAppointments(selectedDate);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setCheckingInId('');
-    }
-  };
-
-  const handleCancel = async (record: DayAppointment) => {
-    setCancellingId(record.id);
-    try {
-      await api.post(`/appointments/${record.id}/cancel`);
-      message.success('预约已取消');
-      loadDayAppointments(selectedDate);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setCancellingId('');
-    }
-  };
-
   const handleDateClick = (date: string) => {
     setSelectedDate(date);
     setDayAppointmentPage(1);
@@ -235,9 +181,6 @@ function AppointmentCalendar() {
       }
       if (serviceItemId) {
         params.service_item_id = serviceItemId;
-      }
-      if (dayStatusFilter) {
-        params.status = dayStatusFilter;
       }
       const res: DayAppointmentsResponse = await api.get('/appointments/calendar/day-appointments', { params });
       allResults.push(...res.appointments);
@@ -505,47 +448,6 @@ function AppointmentCalendar() {
       width: 160,
       render: (time: string) => dayjs(time).format('YYYY-MM-DD HH:mm'),
     },
-    {
-      title: '操作',
-      key: 'action',
-      width: 200,
-      fixed: 'right' as const,
-      render: (_: any, record: DayAppointment) => (
-        <Space size="small">
-          {(user?.role === 'window' || user?.role === 'admin') && (
-            <Button
-              type="primary"
-              size="small"
-              icon={<PrinterOutlined />}
-              disabled={!canCheckIn(record)}
-              loading={checkingInId === record.id}
-              onClick={() => handleCheckIn(record)}
-            >
-              一键取号
-            </Button>
-          )}
-          {(user?.role === 'admin' || user?.role === 'window' || user?.role === 'approver') && (
-            <Popconfirm
-              title="确定要取消该预约吗？"
-              onConfirm={() => handleCancel(record)}
-              okText="确定"
-              cancelText="取消"
-              disabled={!canCancel(record) || cancellingId === record.id}
-            >
-              <Button
-                danger
-                size="small"
-                icon={<StopOutlined />}
-                disabled={!canCancel(record)}
-                loading={cancellingId === record.id}
-              >
-                取消预约
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
-      ),
-    },
   ];
 
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
@@ -799,34 +701,17 @@ function AppointmentCalendar() {
             关闭
           </Button>,
         ]}
-        width={1100}
+        width={900}
         destroyOnClose
       >
         <div style={{ marginBottom: 16 }}>
-          <Row gutter={16} align="middle">
+          <Row gutter={16}>
             <Col span={8}>
               <Statistic
                 title="总预约数"
                 value={dayAppointmentTotal}
                 prefix={<CalendarOutlined />}
               />
-            </Col>
-            <Col span={16} style={{ textAlign: 'right' }}>
-              <Select
-                placeholder="按状态筛选"
-                value={dayStatusFilter || undefined}
-                onChange={(value) => {
-                  setDayStatusFilter(value || '');
-                  setDayAppointmentPage(1);
-                }}
-                style={{ width: 160 }}
-                allowClear
-              >
-                <Select.Option value="pending">待确认</Select.Option>
-                <Select.Option value="confirmed">已确认</Select.Option>
-                <Select.Option value="completed">已完成</Select.Option>
-                <Select.Option value="cancelled">已取消</Select.Option>
-              </Select>
             </Col>
           </Row>
         </div>
@@ -842,7 +727,7 @@ function AppointmentCalendar() {
             onChange: setDayAppointmentPage,
             showSizeChanger: false,
           }}
-          scroll={{ x: 1050 }}
+          scroll={{ x: 800 }}
         />
       </Modal>
     </div>

@@ -28,7 +28,6 @@ import Users from '../pages/admin/Users';
 import Windows from '../pages/admin/Windows';
 import NumberSources from '../pages/admin/NumberSources';
 import AppointmentCalendar from '../pages/admin/AppointmentCalendar';
-import AppointmentList from '../pages/admin/AppointmentList';
 import CaseManagement from '../pages/admin/CaseManagement';
 import CaseReview from '../pages/admin/CaseReview';
 import CaseCollaboration from '../pages/admin/CaseCollaboration';
@@ -47,7 +46,6 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   admin: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-calendar', icon: <CalendarOutlined />, label: '预约日历' },
-    { key: '/admin/appointments', icon: <UnorderedListOutlined />, label: '预约列表' },
     { key: '/admin/service-items', icon: <UnorderedListOutlined />, label: '事项管理' },
     { key: '/admin/departments', icon: <ApartmentOutlined />, label: '科室管理' },
     { key: '/admin/users', icon: <UserOutlined />, label: '用户管理' },
@@ -63,7 +61,6 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   window: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-calendar', icon: <CalendarOutlined />, label: '预约日历' },
-    { key: '/admin/appointments', icon: <UnorderedListOutlined />, label: '预约列表' },
     { key: '/admin/calling', icon: <SoundOutlined />, label: '叫号系统' },
     { key: '/admin/case-accept', icon: <FormOutlined />, label: '办件受理' },
   ],
@@ -143,7 +140,6 @@ function AdminLayout() {
             <Routes>
               <Route path="/" element={<AdminDashboard />} />
               <Route path="/appointment-calendar" element={<AppointmentCalendar />} />
-              <Route path="/appointments" element={<AppointmentList />} />
               <Route path="/service-items" element={<ServiceItems />} />
               <Route path="/departments" element={<Departments />} />
               <Route path="/users" element={<Users />} />
