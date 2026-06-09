@@ -367,6 +367,102 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
   res.json({ message: '材料审核完成' });
 });
 
+// 批量材料预审
+router.post('/:id/material-batch-review', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { reviews } = req.body;
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (!Array.isArray(reviews) || reviews.length === 0) {
+    return res.status(400).json({ message: '请选择待审核材料' });
+  }
+
+  const normalizedReviews = reviews.map((item: any) => ({
+    material_id: item?.material_id,
+    status: item?.status,
+    review_comment: typeof item?.review_comment === 'string' ? item.review_comment.trim() : '',
+  }));
+
+  const materialIds = normalizedReviews.map((item) => item.material_id);
+  if (materialIds.some((materialId) => !materialId)) {
+    return res.status(400).json({ message: '材料审核数据不完整' });
+  }
+
+  if (new Set(materialIds).size !== materialIds.length) {
+    return res.status(400).json({ message: '不能重复审核同一份材料' });
+  }
+
+  const invalidReview = normalizedReviews.find((item) => !['approved', 'rejected'].includes(item.status));
+  if (invalidReview) {
+    return res.status(400).json({ message: '材料审核状态不正确' });
+  }
+
+  const missingRejectComment = normalizedReviews.find(
+    (item) => item.status === 'rejected' && !item.review_comment
+  );
+  if (missingRejectComment) {
+    return res.status(400).json({ message: '驳回材料必须填写审核意见' });
+  }
+
+  const placeholders = materialIds.map(() => '?').join(',');
+  const materials = db.prepare(`
+    SELECT * FROM case_materials
+    WHERE case_id = ? AND id IN (${placeholders})
+  `).all(id, ...materialIds) as any[];
+
+  if (materials.length !== materialIds.length) {
+    return res.status(404).json({ message: '存在不属于当前办件的材料' });
+  }
+
+  const nonPendingMaterial = materials.find((material) => material.status !== 'pending');
+  if (nonPendingMaterial) {
+    return res.status(400).json({ message: '仅待审核材料可以批量审核' });
+  }
+
+  const materialMap = new Map(materials.map((material) => [material.id, material]));
+
+  const tx = db.transaction(() => {
+    normalizedReviews.forEach((item) => {
+      db.prepare(`
+        UPDATE case_materials
+        SET status = ?, review_comment = ?, reviewed_by = ?,
+          reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(
+        item.status,
+        item.review_comment || (item.status === 'approved' ? '材料审核通过' : null),
+        req.user!.id,
+        item.material_id
+      );
+    });
+
+    const caseStatus = refreshCaseMaterialStatus(id, caseItem.status);
+    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(caseStatus, id);
+
+    const summary = normalizedReviews.map((item) => {
+      const material = materialMap.get(item.material_id) as any;
+      if (item.status === 'rejected') {
+        return `${material.name}不通过：${item.review_comment}`;
+      }
+      return `${material.name}通过${item.review_comment ? `：${item.review_comment}` : ''}`;
+    }).join('；');
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+      VALUES (?, ?, ?, NULL, 'material_batch_review', ?, ?)
+    `).run(uuidv4(), id, req.user!.id, caseStatus, `批量审核材料：${summary}`);
+  });
+
+  tx();
+
+  res.json({ message: '材料批量审核完成' });
+});
+
 // 提交补正材料
 router.post('/:id/materials/:materialId/correction', requireRoles('citizen'), (req: AuthRequest, res) => {
   const { id, materialId } = req.params;

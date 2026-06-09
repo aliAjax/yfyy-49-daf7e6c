@@ -23,6 +23,10 @@ function CaseManagement() {
   const [caseMaterials, setCaseMaterials] = useState<CaseMaterial[]>([]);
   const [caseFlows, setCaseFlows] = useState<CaseFlow[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
+  const [batchReviewVisible, setBatchReviewVisible] = useState(false);
+  const [batchReviews, setBatchReviews] = useState<Record<string, { status: 'approved' | 'rejected'; review_comment: string }>>({});
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [stats, setStats] = useState({
     total: 0,
     processing: 0,
@@ -94,6 +98,8 @@ function CaseManagement() {
     setCurrentCase(caseItem);
     setDetailVisible(true);
     setDetailLoading(true);
+    setSelectedMaterialIds([]);
+    setBatchReviews({});
     try {
       const res: any = await api.get(`/cases/${caseItem.id}`);
       setCaseMaterials(res.materials || []);
@@ -102,6 +108,85 @@ function CaseManagement() {
       console.error(error);
     } finally {
       setDetailLoading(false);
+    }
+  };
+
+  const reloadCurrentCaseDetail = async () => {
+    if (!currentCase) return;
+    const res: any = await api.get(`/cases/${currentCase.id}`);
+    setCurrentCase(res.case);
+    setCaseMaterials(res.materials || []);
+    setCaseFlows(res.flows || []);
+  };
+
+  const pendingMaterials = caseMaterials.filter((material) => material.status === 'pending');
+
+  const handleOpenBatchReview = () => {
+    if (selectedMaterialIds.length === 0) {
+      message.warning('请先选择待审核材料');
+      return;
+    }
+
+    const nextReviews = selectedMaterialIds.reduce<Record<string, { status: 'approved' | 'rejected'; review_comment: string }>>(
+      (drafts, materialId) => {
+        drafts[materialId] = batchReviews[materialId] || { status: 'approved', review_comment: '材料审核通过' };
+        return drafts;
+      },
+      {}
+    );
+    setBatchReviews(nextReviews);
+    setBatchReviewVisible(true);
+  };
+
+  const handleBatchReviewChange = (
+    materialId: string,
+    field: 'status' | 'review_comment',
+    value: 'approved' | 'rejected' | string
+  ) => {
+    setBatchReviews((prev) => {
+      const current = prev[materialId] || { status: 'approved', review_comment: '材料审核通过' };
+      const next = { ...current, [field]: value };
+      if (field === 'status') {
+        next.review_comment = value === 'approved' ? (current.review_comment || '材料审核通过') : '';
+      }
+      return { ...prev, [materialId]: next };
+    });
+  };
+
+  const handleBatchReviewSubmit = async () => {
+    const selectedMaterials = caseMaterials.filter((material) => selectedMaterialIds.includes(material.id));
+    const invalidReview = selectedMaterials.find((material) => {
+      const review = batchReviews[material.id];
+      return !review || !review.status || (review.status === 'rejected' && !review.review_comment.trim());
+    });
+
+    if (invalidReview) {
+      message.warning('请补全所选材料的审核结果，驳回时必须填写意见');
+      return;
+    }
+
+    try {
+      setBatchSubmitting(true);
+      await api.post(`/cases/${currentCase?.id}/material-batch-review`, {
+        reviews: selectedMaterials.map((material) => {
+          const review = batchReviews[material.id];
+          return {
+            material_id: material.id,
+            status: review.status,
+            review_comment: review.review_comment.trim(),
+          };
+        }),
+      });
+      message.success('材料批量审核完成');
+      setBatchReviewVisible(false);
+      setSelectedMaterialIds([]);
+      setBatchReviews({});
+      await reloadCurrentCaseDetail();
+      loadCases();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setBatchSubmitting(false);
     }
   };
 
@@ -320,12 +405,27 @@ function CaseManagement() {
       <Modal
         title="办件详情"
         open={detailVisible}
-        onCancel={() => setDetailVisible(false)}
+        onCancel={() => {
+          setDetailVisible(false);
+          setSelectedMaterialIds([]);
+          setBatchReviews({});
+        }}
         footer={[
+          pendingMaterials.length > 0 && (
+            <Button
+              key="batch-review"
+              type="primary"
+              disabled={selectedMaterialIds.length === 0}
+              loading={batchSubmitting}
+              onClick={handleOpenBatchReview}
+            >
+              批量审核{selectedMaterialIds.length > 0 ? `(${selectedMaterialIds.length})` : ''}
+            </Button>
+          ),
           <Button key="close" onClick={() => setDetailVisible(false)}>
             关闭
           </Button>,
-        ]}
+        ].filter(Boolean)}
         width={800}
         destroyOnClose
       >
@@ -350,11 +450,30 @@ function CaseManagement() {
 
             {caseMaterials.length > 0 && (
               <div style={{ marginBottom: 16 }}>
-                <h4 style={{ marginBottom: 8 }}>材料清单</h4>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <h4 style={{ marginBottom: 0 }}>材料清单</h4>
+                  {pendingMaterials.length > 0 && (
+                    <Button
+                      size="small"
+                      type="primary"
+                      disabled={selectedMaterialIds.length === 0}
+                      onClick={handleOpenBatchReview}
+                    >
+                      批量审核{selectedMaterialIds.length > 0 ? `(${selectedMaterialIds.length})` : ''}
+                    </Button>
+                  )}
+                </div>
                 <Table
                   size="small"
                   dataSource={caseMaterials}
                   rowKey="id"
+                  rowSelection={{
+                    selectedRowKeys: selectedMaterialIds,
+                    onChange: (selectedRowKeys) => setSelectedMaterialIds(selectedRowKeys as string[]),
+                    getCheckboxProps: (material: CaseMaterial) => ({
+                      disabled: material.status !== 'pending',
+                    }),
+                  }}
                   columns={[
                     { title: '材料名称', dataIndex: 'name', key: 'name' },
                     {
@@ -404,6 +523,51 @@ function CaseManagement() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="批量审核材料"
+        open={batchReviewVisible}
+        onCancel={() => setBatchReviewVisible(false)}
+        width={720}
+        destroyOnClose
+        footer={[
+          <Button key="cancel" onClick={() => setBatchReviewVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" loading={batchSubmitting} onClick={handleBatchReviewSubmit}>
+            提交审核
+          </Button>,
+        ]}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {caseMaterials
+            .filter((material) => selectedMaterialIds.includes(material.id))
+            .map((material) => {
+              const review = batchReviews[material.id] || { status: 'approved', review_comment: '材料审核通过' };
+              return (
+                <Card key={material.id} size="small" title={material.name}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                    <Select
+                      value={review.status}
+                      style={{ width: 160 }}
+                      onChange={(value) => handleBatchReviewChange(material.id, 'status', value)}
+                    >
+                      <Select.Option value="approved">通过</Select.Option>
+                      <Select.Option value="rejected">驳回</Select.Option>
+                    </Select>
+                    <Input.TextArea
+                      rows={3}
+                      value={review.review_comment}
+                      status={review.status === 'rejected' && !review.review_comment.trim() ? 'error' : undefined}
+                      placeholder={review.status === 'rejected' ? '请输入驳回原因' : '请输入审核意见'}
+                      onChange={(event) => handleBatchReviewChange(material.id, 'review_comment', event.target.value)}
+                    />
+                  </Space>
+                </Card>
+              );
+            })}
+        </Space>
       </Modal>
     </div>
   );
