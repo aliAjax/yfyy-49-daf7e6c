@@ -9,7 +9,7 @@ import {
   ClockCircleOutlined,
   SwapRightOutlined,
 } from '@ant-design/icons';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../../api';
 import type { Ticket, Window, ServiceItem } from '../../types';
 import { TicketStatusText } from '../../types';
@@ -30,17 +30,9 @@ function TicketQueue() {
   const [selectedWindow, setSelectedWindow] = useState<string>('');
   const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
   const [selectedServiceItem, setSelectedServiceItem] = useState<string>('');
-  const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     loadWindows();
-    startPolling();
-
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
   }, []);
 
   useEffect(() => {
@@ -51,14 +43,15 @@ function TicketQueue() {
   useEffect(() => {
     loadQueue();
     loadStats();
-  }, [selectedWindow, selectedServiceItem]);
-
-  const startPolling = () => {
-    timerRef.current = window.setInterval(() => {
+    if (!selectedWindow) {
+      return;
+    }
+    const timer = window.setInterval(() => {
       loadQueue();
       loadStats();
     }, 5000);
-  };
+    return () => window.clearInterval(timer);
+  }, [selectedWindow, selectedServiceItem]);
 
   const loadWindows = async () => {
     try {
