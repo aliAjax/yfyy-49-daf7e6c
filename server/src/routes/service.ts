@@ -10,7 +10,7 @@ router.use(authMiddleware);
 
 // 服务事项列表
 router.get('/service-items', (req: AuthRequest, res) => {
-  const { department_id, status, keyword, page = 1, pageSize = 20 } = req.query as any;
+  const { department_id, window_id, status, keyword, page = 1, pageSize = 20 } = req.query as any;
   
   let sql = `
     SELECT si.*, d.name as department_name, w.name as window_name 
@@ -24,6 +24,10 @@ router.get('/service-items', (req: AuthRequest, res) => {
   if (department_id) {
     sql += ' AND si.department_id = ?';
     params.push(department_id);
+  }
+  if (window_id) {
+    sql += ' AND si.window_id = ?';
+    params.push(window_id);
   }
   if (status) {
     sql += ' AND si.status = ?';

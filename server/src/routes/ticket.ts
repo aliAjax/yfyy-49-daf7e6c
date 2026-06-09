@@ -21,7 +21,7 @@ router.get('/queue', (req: AuthRequest, res) => {
   const params: any[] = [];
 
   if (window_id) {
-    sql += ' AND t.window_id = ?';
+    sql += ' AND (CASE WHEN t.status = \'waiting\' THEN si.window_id ELSE t.window_id END) = ?';
     params.push(window_id);
   }
   if (service_item_id) {
@@ -227,16 +227,31 @@ router.post('/:id/cancel', requireRoles('window', 'admin'), (req: AuthRequest, r
 
 // 获取叫号统计
 router.get('/stats/today', (req: AuthRequest, res) => {
+  const { window_id, service_item_id } = req.query as any;
   const today = dayjs().format('YYYY-MM-DD');
   
-  const stats = db.prepare(`
+  let sql = `
     SELECT 
-      status,
+      t.status,
       COUNT(*) as count
-    FROM tickets 
-    WHERE DATE(created_at) = ?
-    GROUP BY status
-  `).all(today);
+    FROM tickets t
+    LEFT JOIN service_items si ON t.service_item_id = si.id
+    WHERE DATE(t.created_at) = ?
+  `;
+  const params: any[] = [today];
+
+  if (window_id) {
+    sql += ' AND (CASE WHEN t.status = \'waiting\' THEN si.window_id ELSE t.window_id END) = ?';
+    params.push(window_id);
+  }
+  if (service_item_id) {
+    sql += ' AND t.service_item_id = ?';
+    params.push(service_item_id);
+  }
+
+  sql += ' GROUP BY t.status';
+
+  const stats = db.prepare(sql).all(...params);
 
   const result: any = {
     waiting: 0,

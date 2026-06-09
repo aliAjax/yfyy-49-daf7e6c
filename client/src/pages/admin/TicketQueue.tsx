@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons';
 import { useState, useEffect, useRef } from 'react';
 import api from '../../api';
-import type { Ticket, Window } from '../../types';
+import type { Ticket, Window, ServiceItem } from '../../types';
 import { TicketStatusText } from '../../types';
 
 function TicketQueue() {
@@ -28,11 +28,12 @@ function TicketQueue() {
   });
   const [windows, setWindows] = useState<Window[]>([]);
   const [selectedWindow, setSelectedWindow] = useState<string>('');
+  const [serviceItems, setServiceItems] = useState<ServiceItem[]>([]);
+  const [selectedServiceItem, setSelectedServiceItem] = useState<string>('');
   const timerRef = useRef<number | null>(null);
 
   useEffect(() => {
     loadWindows();
-    loadStats();
     startPolling();
 
     return () => {
@@ -43,8 +44,14 @@ function TicketQueue() {
   }, []);
 
   useEffect(() => {
-    loadQueue();
+    loadServiceItems();
+    setSelectedServiceItem('');
   }, [selectedWindow]);
+
+  useEffect(() => {
+    loadQueue();
+    loadStats();
+  }, [selectedWindow, selectedServiceItem]);
 
   const startPolling = () => {
     timerRef.current = window.setInterval(() => {
@@ -67,19 +74,38 @@ function TicketQueue() {
     }
   };
 
+  const loadServiceItems = async () => {
+    if (!selectedWindow) {
+      setServiceItems([]);
+      return;
+    }
+    try {
+      const res: any = await api.get('/service/service-items', {
+        params: { window_id: selectedWindow, status: 'active', pageSize: 100 },
+      });
+      setServiceItems(res.items || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const loadQueue = async () => {
     if (!selectedWindow) return;
     setLoading(true);
     try {
-      const res: any = await api.get('/tickets/queue', {
-        params: { window_id: selectedWindow },
-      });
+      const params: any = { window_id: selectedWindow };
+      if (selectedServiceItem) {
+        params.service_item_id = selectedServiceItem;
+      }
+      const res: any = await api.get('/tickets/queue', { params });
       const tickets = res.tickets || [];
       setQueue(tickets.filter((t: Ticket) => t.status === 'waiting'));
 
       const callingTicket = tickets.find((t: Ticket) => t.status === 'calling');
       if (callingTicket) {
         setCurrentTicket(callingTicket);
+      } else {
+        setCurrentTicket(null);
       }
     } catch (error) {
       console.error(error);
@@ -90,7 +116,14 @@ function TicketQueue() {
 
   const loadStats = async () => {
     try {
-      const res: any = await api.get('/tickets/stats/today');
+      const params: any = {};
+      if (selectedWindow) {
+        params.window_id = selectedWindow;
+      }
+      if (selectedServiceItem) {
+        params.service_item_id = selectedServiceItem;
+      }
+      const res: any = await api.get('/tickets/stats/today', { params });
       setStats(res.stats || {
         waiting: 0,
         calling: 0,
@@ -243,22 +276,43 @@ function TicketQueue() {
           <Card
             title="当前叫号"
             extra={
-              <Space>
-                <Select
-                  placeholder="选择窗口"
-                  value={selectedWindow || undefined}
-                  onChange={setSelectedWindow}
-                  style={{ width: 150 }}
-                >
-                  {windows.map((win) => (
-                    <Select.Option key={win.id} value={win.id}>
-                      {win.number} - {win.name}
-                    </Select.Option>
-                  ))}
-                </Select>
-                <Button icon={<ReloadOutlined />} onClick={refreshData}>
-                  刷新
-                </Button>
+              <Space direction="vertical" size="small" style={{ alignItems: 'flex-end' }}>
+                <Space>
+                  <Select
+                    placeholder="选择窗口"
+                    value={selectedWindow || undefined}
+                    onChange={setSelectedWindow}
+                    style={{ width: 180 }}
+                    showSearch
+                    optionFilterProp="children"
+                  >
+                    {windows.map((win) => (
+                      <Select.Option key={win.id} value={win.id}>
+                        {win.number} - {win.name}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                  <Button icon={<ReloadOutlined />} onClick={refreshData}>
+                    刷新
+                  </Button>
+                </Space>
+                {serviceItems.length > 0 && (
+                  <Select
+                    placeholder="选择服务事项（全部）"
+                    value={selectedServiceItem || undefined}
+                    onChange={setSelectedServiceItem}
+                    style={{ width: 260 }}
+                    allowClear
+                    showSearch
+                    optionFilterProp="children"
+                  >
+                    {serviceItems.map((item) => (
+                      <Select.Option key={item.id} value={item.id}>
+                        {item.code} - {item.name}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                )}
               </Space>
             }
           >
