@@ -247,7 +247,22 @@ export function initDatabase() {
     );
   `);
 
+  migrateDatabase();
+
   console.log('数据库初始化完成');
+}
+
+function migrateDatabase() {
+  try {
+    const columns = db.prepare("PRAGMA table_info(notifications)").all() as any[];
+    const hasSubType = columns.some((col: any) => col.name === 'sub_type');
+    if (!hasSubType) {
+      db.prepare("ALTER TABLE notifications ADD COLUMN sub_type TEXT").run();
+      console.log('数据库迁移：notifications 表已添加 sub_type 字段');
+    }
+  } catch (error) {
+    console.error('数据库迁移失败：', error);
+  }
 }
 
 export default db;

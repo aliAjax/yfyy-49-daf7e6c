@@ -309,6 +309,8 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
     return res.status(404).json({ message: '材料不存在' });
   }
 
+  let materialCorrectionNeeded = false;
+
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE case_materials 
@@ -323,6 +325,7 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
     let caseStatus: CaseStatus = caseItem.status;
     if (allReviewed) {
       caseStatus = hasRejected ? 'material_correction' : 'accepting';
+      materialCorrectionNeeded = hasRejected;
       db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
         .run(caseStatus, id);
 
@@ -336,7 +339,7 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
 
   tx();
 
-  if (caseItem.user_id && hasRejected) {
+  if (caseItem.user_id && materialCorrectionNeeded) {
     db.prepare(`
       INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
       VALUES (?, ?, 'case', 'case_material_correction', '材料需补正', ?, ?)
