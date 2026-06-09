@@ -187,6 +187,7 @@ export function initDatabase() {
       to_user_id TEXT,
       action TEXT NOT NULL,
       status TEXT NOT NULL,
+      previous_status TEXT,
       comment TEXT,
       deadline DATETIME,
       handled_at DATETIME,
@@ -239,6 +240,7 @@ export function initDatabase() {
   ensureColumn('case_materials', 'correction_comment', 'TEXT');
   ensureColumn('case_materials', 'corrected_at', 'DATETIME');
   ensureColumn('case_materials', 'correction_count', 'INTEGER DEFAULT 0');
+  ensureColumn('case_flows', 'previous_status', 'TEXT');
 
   console.log('数据库初始化完成');
 }

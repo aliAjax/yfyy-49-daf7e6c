@@ -3,18 +3,21 @@ import { SearchOutlined, EyeOutlined, CheckOutlined, CloseOutlined, SwapOutlined
 import { useState, useEffect } from 'react';
 import dayjs from 'dayjs';
 import api from '../../api';
-import type { Case, Department, CaseMaterial, CaseFlow } from '../../types';
+import type { Case, Department, CaseMaterial, CaseFlow, User } from '../../types';
 import { CaseStatusText } from '../../types';
+import { useAuthStore } from '../../store/auth';
 
 const { TextArea } = AntInput;
 
 function CaseReview() {
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [cases, setCases] = useState<Case[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [keyword, setKeyword] = useState('');
   const [serviceItemId, setServiceItemId] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
@@ -25,6 +28,7 @@ function CaseReview() {
   const [approveModalVisible, setApproveModalVisible] = useState(false);
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [transferModalVisible, setTransferModalVisible] = useState(false);
+  const [returnModalVisible, setReturnModalVisible] = useState(false);
   const [materialRejectModalVisible, setMaterialRejectModalVisible] = useState(false);
   const [currentMaterial, setCurrentMaterial] = useState<CaseMaterial | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -35,11 +39,13 @@ function CaseReview() {
   const [approveForm] = Form.useForm();
   const [rejectForm] = Form.useForm();
   const [transferForm] = Form.useForm();
+  const [returnForm] = Form.useForm();
   const [materialRejectForm] = Form.useForm();
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
     loadDepartments();
+    loadUsers();
     loadCases();
   }, [page, pageSize]);
 
@@ -47,6 +53,17 @@ function CaseReview() {
     try {
       const res: any = await api.get('/system/departments');
       setDepartments(res.departments || []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const res: any = await api.get('/system/users', {
+        params: { role: 'approver', pageSize: 1000 },
+      });
+      setUsers(res.users || []);
     } catch (error) {
       console.error(error);
     }
@@ -62,13 +79,18 @@ function CaseReview() {
       if (keyword) baseParams.keyword = keyword;
       if (serviceItemId) baseParams.service_item_id = serviceItemId;
 
-      const [reviewingRes, materialRes]: any[] = await Promise.all([
+      const [reviewingRes, materialRes, crossDepartmentRes]: any[] = await Promise.all([
         api.get('/cases', { params: { ...baseParams, status: 'reviewing' } }),
         api.get('/cases', { params: { ...baseParams, status: 'material_reviewing' } }),
+        api.get('/cases', { params: { ...baseParams, status: 'cross_department' } }),
       ]);
-      const mergedCases = [...(materialRes.cases || []), ...(reviewingRes.cases || [])];
+      const mergedCases = [
+        ...(materialRes.cases || []),
+        ...(reviewingRes.cases || []),
+        ...(crossDepartmentRes.cases || []),
+      ];
       setCases(mergedCases);
-      const mergedTotal = (materialRes.total || 0) + (reviewingRes.total || 0);
+      const mergedTotal = (materialRes.total || 0) + (reviewingRes.total || 0) + (crossDepartmentRes.total || 0);
       setTotal(mergedTotal);
       setPendingCount(mergedTotal);
     } catch (error) {
@@ -155,6 +177,10 @@ function CaseReview() {
     setTransferModalVisible(true);
   };
 
+  const handleTransferDepartmentChange = () => {
+    transferForm.setFieldValue('to_user_id', undefined);
+  };
+
   const handleTransferSubmit = async () => {
     try {
       const values = await transferForm.validateFields();
@@ -163,6 +189,44 @@ function CaseReview() {
       message.success('流转成功');
       setTransferModalVisible(false);
       loadCases();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReceive = async (caseItem: Case) => {
+    try {
+      setSubmitting(true);
+      await api.post(`/cases/${caseItem.id}/receive`, {});
+      message.success('接收成功');
+      loadCases();
+      if (currentCase?.id === caseItem.id) {
+        await reloadCurrentCaseDetail();
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleReturn = (caseItem: Case) => {
+    setCurrentCase(caseItem);
+    returnForm.resetFields();
+    setReturnModalVisible(true);
+  };
+
+  const handleReturnSubmit = async () => {
+    try {
+      const values = await returnForm.validateFields();
+      setSubmitting(true);
+      await api.post(`/cases/${currentCase?.id}/return`, values);
+      message.success('已退回上一科室');
+      setReturnModalVisible(false);
+      loadCases();
+      setDetailVisible(false);
     } catch (error) {
       console.error(error);
     } finally {
@@ -309,6 +373,12 @@ function CaseReview() {
     return colorMap[status] || 'default';
   };
 
+  const selectedTransferDepartmentId = Form.useWatch('to_department_id', transferForm);
+  const transferUsers = users.filter((item) => item.department_id === selectedTransferDepartmentId);
+  const canHandleCrossDepartment = (caseItem: Case) =>
+    caseItem.status === 'cross_department' &&
+    (user?.role === 'admin' || !user?.department_id || user.department_id === caseItem.department_id);
+
   const columns = [
     {
       title: '办件编号',
@@ -372,6 +442,16 @@ function CaseReview() {
           <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => handleTransfer(record)}>
             流转
           </Button>
+          {canHandleCrossDepartment(record) && (
+            <>
+              <Button type="link" size="small" disabled={submitting} onClick={() => handleReceive(record)}>
+                接收
+              </Button>
+              <Button type="link" size="small" danger disabled={submitting} onClick={() => handleReturn(record)}>
+                退回
+              </Button>
+            </>
+          )}
         </Space>
       ),
     },
@@ -587,7 +667,18 @@ function CaseReview() {
                   columns={[
                     { title: '操作', dataIndex: 'action', key: 'action', width: 100 },
                     { title: '状态', dataIndex: 'status', key: 'status', width: 120 },
+                    { title: '上一状态', dataIndex: 'previous_status', key: 'previous_status', width: 120, render: (v: string) => v || '-' },
                     { title: '操作人', dataIndex: 'from_user_name', key: 'from_user_name', width: 100 },
+                    {
+                      title: '流转',
+                      key: 'department_path',
+                      width: 180,
+                      render: (_: any, flow: CaseFlow) => {
+                        const from = flow.from_department_name || flow.from_user_name || '-';
+                        const to = flow.to_department_name || flow.to_user_name;
+                        return to ? `${from} → ${to}${flow.to_user_name ? `/${flow.to_user_name}` : ''}` : from;
+                      },
+                    },
                     { title: '意见', dataIndex: 'comment', key: 'comment' },
                     {
                       title: '时间',
@@ -722,7 +813,12 @@ function CaseReview() {
             label="目标科室"
             rules={[{ required: true, message: '请选择目标科室' }]}
           >
-            <Select placeholder="请选择目标科室" showSearch optionFilterProp="children">
+            <Select
+              placeholder="请选择目标科室"
+              showSearch
+              optionFilterProp="children"
+              onChange={handleTransferDepartmentChange}
+            >
               {departments
                 .filter((d) => d.id !== currentCase?.department_id)
                 .map((dept) => (
@@ -732,8 +828,49 @@ function CaseReview() {
                 ))}
             </Select>
           </Form.Item>
+          <Form.Item name="to_user_id" label="目标办理人">
+            <Select
+              placeholder={selectedTransferDepartmentId ? '请选择目标办理人（选填）' : '请先选择目标科室'}
+              disabled={!selectedTransferDepartmentId}
+              allowClear
+              showSearch
+              optionFilterProp="children"
+            >
+              {transferUsers.map((item) => (
+                <Select.Option key={item.id} value={item.id}>
+                  {item.name}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
           <Form.Item name="comment" label="流转说明">
             <TextArea rows={4} placeholder="请输入流转说明（选填）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="退回上一科室"
+        open={returnModalVisible}
+        onCancel={() => setReturnModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setReturnModalVisible(false)}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" danger loading={submitting} onClick={handleReturnSubmit}>
+            确认退回
+          </Button>,
+        ]}
+        width={500}
+        destroyOnClose
+      >
+        <Form form={returnForm} layout="vertical">
+          <Form.Item
+            name="reason"
+            label="退回原因"
+            rules={[{ required: true, message: '请输入退回原因' }]}
+          >
+            <TextArea rows={4} placeholder="请输入退回原因" />
           </Form.Item>
         </Form>
       </Modal>

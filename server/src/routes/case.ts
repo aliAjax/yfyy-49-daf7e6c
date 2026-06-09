@@ -87,6 +87,10 @@ function refreshCaseMaterialStatus(caseId: string, fallbackStatus: CaseStatus) {
   return hasPending ? 'material_reviewing' : 'accepting';
 }
 
+function canAccessCaseDepartment(req: AuthRequest, departmentId?: string | null) {
+  return req.user!.role === 'admin' || !req.user!.department_id || req.user!.department_id === departmentId;
+}
+
 // 获取我的办件（群众）
 router.get('/my', (req: AuthRequest, res) => {
   const { status, keyword, page = 1, pageSize = 20 } = req.query as any;
@@ -651,7 +655,7 @@ router.post('/:id/reject', requireRoles('approver', 'admin'), (req: AuthRequest,
 // 跨科室流转
 router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
-  const { to_department_id, comment } = req.body;
+  const { to_department_id, to_user_id, comment } = req.body;
   
   const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
   if (!caseItem) {
@@ -671,6 +675,17 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
     return res.status(400).json({ message: '目标科室不存在' });
   }
 
+  let toUser = null as any;
+  if (to_user_id) {
+    toUser = db.prepare(`
+      SELECT id, name, department_id FROM users
+      WHERE id = ? AND status = 'active' AND role IN ('approver', 'admin')
+    `).get(to_user_id) as any;
+    if (!toUser || toUser.department_id !== to_department_id) {
+      return res.status(400).json({ message: '目标办理人不存在或不属于目标科室' });
+    }
+  }
+
   if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
     return res.status(403).json({ message: '无权流转其他科室的办件' });
   }
@@ -678,20 +693,160 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
   const tx = db.transaction(() => {
     db.prepare(`
       UPDATE cases SET department_id = ?, status = 'cross_department', 
-        current_handler_id = NULL, updated_at = CURRENT_TIMESTAMP
+        current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(to_department_id, id);
+    `).run(to_department_id, to_user_id || null, id);
 
     db.prepare(`
       INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
-        from_user_id, to_user_id, action, status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, NULL, 'transfer', 'cross_department', ?, CURRENT_TIMESTAMP)
-    `).run(uuidv4(), id, caseItem.department_id, to_department_id, req.user!.id, comment || '跨科室流转');
+        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'transfer', 'cross_department', ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      uuidv4(),
+      id,
+      caseItem.department_id,
+      to_department_id,
+      req.user!.id,
+      to_user_id || null,
+      caseItem.status,
+      comment || `跨科室流转${toUser ? `，指定${toUser.name}办理` : ''}`
+    );
   });
 
   tx();
 
   res.json({ message: '流转成功' });
+});
+
+// 接收跨科室流转
+router.post('/:id/receive', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { comment } = req.body;
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前办件无需接收' });
+  }
+
+  if (!canAccessCaseDepartment(req, caseItem.department_id)) {
+    return res.status(403).json({ message: '无权接收其他科室的办件' });
+  }
+
+  if (caseItem.current_handler_id && caseItem.current_handler_id !== req.user!.id && req.user!.role !== 'admin') {
+    return res.status(403).json({ message: '该办件已指定其他办理人接收' });
+  }
+
+  const latestTransfer = db.prepare(`
+    SELECT * FROM case_flows
+    WHERE case_id = ? AND action = 'transfer' AND status = 'cross_department'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(id) as any;
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE cases SET current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(req.user!.id, id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id,
+        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'receive', 'cross_department', ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      uuidv4(),
+      id,
+      latestTransfer?.from_department_id || null,
+      caseItem.department_id,
+      latestTransfer?.from_user_id || null,
+      req.user!.id,
+      caseItem.status,
+      comment || '接收跨科室流转'
+    );
+  });
+
+  tx();
+
+  res.json({ message: '接收成功' });
+});
+
+// 退回上一科室
+router.post('/:id/return', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.status !== 'cross_department') {
+    return res.status(400).json({ message: '当前状态不支持退回上一科室' });
+  }
+
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ message: '请填写退回原因' });
+  }
+
+  if (!canAccessCaseDepartment(req, caseItem.department_id)) {
+    return res.status(403).json({ message: '无权退回其他科室的办件' });
+  }
+
+  const latestTransfer = db.prepare(`
+    SELECT * FROM case_flows
+    WHERE case_id = ? AND action = 'transfer' AND status = 'cross_department'
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(id) as any;
+
+  if (!latestTransfer?.from_department_id) {
+    return res.status(400).json({ message: '未找到上一科室流转记录' });
+  }
+
+  const receivedFlow = db.prepare(`
+    SELECT id FROM case_flows
+    WHERE case_id = ? AND action = 'receive' AND created_at >= ?
+    LIMIT 1
+  `).get(id, latestTransfer.created_at);
+  if (receivedFlow) {
+    return res.status(400).json({ message: '接收后不能退回上一科室' });
+  }
+
+  const restoreStatus = ['reviewing', 'cross_department'].includes(latestTransfer.previous_status)
+    ? latestTransfer.previous_status
+    : 'reviewing';
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE cases SET department_id = ?, status = ?, current_handler_id = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(latestTransfer.from_department_id, restoreStatus, id);
+
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id,
+        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'return', ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(
+      uuidv4(),
+      id,
+      caseItem.department_id,
+      latestTransfer.from_department_id,
+      req.user!.id,
+      latestTransfer.from_user_id || null,
+      restoreStatus,
+      caseItem.status,
+      String(reason).trim()
+    );
+  });
+
+  tx();
+
+  res.json({ message: '退回成功' });
 });
 
 // 添加材料

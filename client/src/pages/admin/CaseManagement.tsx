@@ -507,7 +507,18 @@ function CaseManagement() {
                   columns={[
                     { title: '操作', dataIndex: 'action', key: 'action', width: 100 },
                     { title: '状态', dataIndex: 'status', key: 'status', width: 120 },
+                    { title: '上一状态', dataIndex: 'previous_status', key: 'previous_status', width: 120, render: (v: string) => v || '-' },
                     { title: '操作人', dataIndex: 'from_user_name', key: 'from_user_name', width: 100 },
+                    {
+                      title: '流转',
+                      key: 'department_path',
+                      width: 180,
+                      render: (_: any, flow: CaseFlow) => {
+                        const from = flow.from_department_name || flow.from_user_name || '-';
+                        const to = flow.to_department_name || flow.to_user_name;
+                        return to ? `${from} → ${to}${flow.to_user_name ? `/${flow.to_user_name}` : ''}` : from;
+                      },
+                    },
                     { title: '意见', dataIndex: 'comment', key: 'comment' },
                     {
                       title: '时间',

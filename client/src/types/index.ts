@@ -174,6 +174,7 @@ export interface CaseFlow {
   to_user_name?: string;
   action: string;
   status: string;
+  previous_status?: string;
   comment?: string;
   deadline?: string;
   handled_at?: string;
