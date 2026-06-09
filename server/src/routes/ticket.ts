@@ -163,6 +163,10 @@ router.get('/my', (req: AuthRequest, res) => {
 router.post('/issue', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
   const { service_item_id, applicant_name, applicant_phone, appointment_id } = req.body;
   
+  if (appointment_id) {
+    return res.status(400).json({ message: '预约取号请通过预约签到取号入口办理' });
+  }
+
   if (!service_item_id) {
     return res.status(400).json({ message: '请选择服务事项' });
   }
@@ -182,26 +186,13 @@ router.post('/issue', requireRoles('window', 'admin'), (req: AuthRequest, res) =
   const ticketNumber = `${serviceItem.code}-${String(countResult.count + 1).padStart(3, '0')}`;
   const id = uuidv4();
 
-  let userId = null;
-  if (appointment_id) {
-    const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(appointment_id) as any;
-    if (appointment) {
-      userId = appointment.user_id;
-    }
-  }
-
   db.prepare(`
     INSERT INTO tickets (id, ticket_number, service_item_id, user_id, appointment_id, status, applicant_name, applicant_phone)
     VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?)
-  `).run(id, ticketNumber, service_item_id, userId, appointment_id || null, 
+  `).run(id, ticketNumber, service_item_id, null, null, 
         applicant_name || '现场群众', applicant_phone || null);
 
   const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
-
-  if (appointment_id) {
-    db.prepare("UPDATE appointments SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .run(appointment_id);
-  }
 
   db.prepare(`
     INSERT INTO operation_logs (user_id, user_name, action, module, detail)

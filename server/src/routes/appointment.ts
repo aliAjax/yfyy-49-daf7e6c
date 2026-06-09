@@ -171,19 +171,27 @@ router.get('/my', (req: AuthRequest, res) => {
 
 // 获取预约列表（管理员/窗口）
 router.get('/', (req: AuthRequest, res) => {
-  const { status, service_item_id, date, keyword, page = 1, pageSize = 20 } = req.query as any;
+  const { status, service_item_id, date, start_date, end_date, keyword, page = 1, pageSize = 20 } = req.query as any;
   
   let sql = `
     SELECT a.*, si.name as service_item_name, si.code as service_item_code,
-      u.name as user_name, u.phone as user_phone
+      d.name as department_name, u.name as user_name, u.phone as user_phone
     FROM appointments a
     LEFT JOIN service_items si ON a.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
     LEFT JOIN users u ON a.user_id = u.id
     WHERE 1=1
   `;
   const params: any[] = [];
 
-  if (req.user!.role === 'approver' && req.user!.department_id) {
+  if (req.user!.role === 'window') {
+    if (req.user!.department_id) {
+      sql += ' AND si.window_id IN (SELECT id FROM windows WHERE department_id = ?)';
+      params.push(req.user!.department_id);
+    } else {
+      sql += ' AND 1=0';
+    }
+  } else if (req.user!.role === 'approver' && req.user!.department_id) {
     sql += ' AND si.department_id = ?';
     params.push(req.user!.department_id);
   }
@@ -199,6 +207,15 @@ router.get('/', (req: AuthRequest, res) => {
   if (date) {
     sql += ' AND a.appointment_date = ?';
     params.push(date);
+  } else {
+    if (start_date) {
+      sql += ' AND a.appointment_date >= ?';
+      params.push(start_date);
+    }
+    if (end_date) {
+      sql += ' AND a.appointment_date <= ?';
+      params.push(end_date);
+    }
   }
   if (keyword) {
     sql += ' AND (a.applicant_name LIKE ? OR u.name LIKE ?)';
@@ -206,7 +223,7 @@ router.get('/', (req: AuthRequest, res) => {
   }
 
   const total = db.prepare(sql.replace(
-    'SELECT a.*, si.name as service_item_name, si.code as service_item_code, u.name as user_name, u.phone as user_phone',
+    'SELECT a.*, si.name as service_item_name, si.code as service_item_code, d.name as department_name, u.name as user_name, u.phone as user_phone',
     'SELECT COUNT(*) as count'
   )).get(...params) as any;
 
@@ -216,6 +233,137 @@ router.get('/', (req: AuthRequest, res) => {
   const appointments = db.prepare(sql).all(...params);
 
   res.json({ appointments, total: total.count, page: Number(page), pageSize: Number(pageSize) });
+});
+
+// 预约签到取号（管理员/窗口）
+router.post('/:id/check-in', requireRoles('admin', 'window'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+
+  const appointment = db.prepare(`
+    SELECT a.*, si.name as service_item_name, si.code as service_item_code
+    FROM appointments a
+    LEFT JOIN service_items si ON a.service_item_id = si.id
+    WHERE a.id = ?
+  `).get(id) as any;
+
+  if (!appointment) {
+    return res.status(404).json({ message: '预约不存在' });
+  }
+
+  if (req.user!.role === 'window' && req.user!.department_id) {
+    const allowed = db.prepare(`
+      SELECT 1
+      FROM service_items si
+      LEFT JOIN windows w ON si.window_id = w.id
+      WHERE si.id = ? AND w.department_id = ?
+    `).get(appointment.service_item_id, req.user!.department_id);
+
+    if (!allowed) {
+      return res.status(403).json({ message: '无权为该预约取号' });
+    }
+  }
+
+  if (appointment.status === 'cancelled') {
+    return res.status(400).json({ message: '该预约已取消，无法取号' });
+  }
+
+  const existingTicket = db.prepare('SELECT * FROM tickets WHERE appointment_id = ? ORDER BY created_at ASC LIMIT 1')
+    .get(id) as any;
+
+  if (appointment.status === 'completed' && existingTicket) {
+    return res.json({ ticket: existingTicket, is_idempotent: true });
+  }
+
+  if (appointment.status === 'completed' && !existingTicket) {
+    return res.status(400).json({ message: '该预约已完成但未找到号票，请联系管理员核查' });
+  }
+
+  if (appointment.status !== 'confirmed') {
+    return res.status(400).json({ message: '仅已确认预约可以签到取号' });
+  }
+
+  if (dayjs(appointment.appointment_date).isBefore(dayjs().format('YYYY-MM-DD'))) {
+    return res.status(400).json({ message: '该预约已过期，无法取号' });
+  }
+
+  if (!appointment.service_item_code || !appointment.service_item_name) {
+    return res.status(400).json({ message: '预约关联事项不存在，无法取号' });
+  }
+
+  const today = dayjs().format('YYYY-MM-DD');
+  const idempotentError = new Error('DUPLICATE_TICKET');
+  const ticketId = uuidv4();
+
+  try {
+    const tx = db.transaction(() => {
+      const duplicateTicket = db.prepare('SELECT id FROM tickets WHERE appointment_id = ? LIMIT 1').get(id);
+      if (duplicateTicket) {
+        throw idempotentError;
+      }
+
+      const countResult = db.prepare(
+        'SELECT COUNT(*) as count FROM tickets WHERE service_item_id = ? AND DATE(created_at) = ?'
+      ).get(appointment.service_item_id, today) as any;
+      const ticketNumber = `${appointment.service_item_code}-${String(countResult.count + 1).padStart(3, '0')}`;
+
+      db.prepare(`
+        INSERT INTO tickets (id, ticket_number, service_item_id, user_id, appointment_id, status, applicant_name, applicant_phone)
+        VALUES (?, ?, ?, ?, ?, 'waiting', ?, ?)
+      `).run(
+        ticketId,
+        ticketNumber,
+        appointment.service_item_id,
+        appointment.user_id,
+        id,
+        appointment.applicant_name || appointment.user_name || '预约群众',
+        appointment.applicant_phone || appointment.user_phone || null
+      );
+
+      const updateResult = db.prepare(`
+        UPDATE appointments
+        SET status = 'completed', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND status = 'confirmed'
+      `).run(id);
+
+      if (updateResult.changes !== 1) {
+        throw idempotentError;
+      }
+    });
+
+    tx();
+  } catch (error) {
+    if (error === idempotentError || (error as Error).message === 'DUPLICATE_TICKET') {
+      const existing = db.prepare('SELECT * FROM tickets WHERE appointment_id = ? ORDER BY created_at ASC LIMIT 1')
+        .get(id) as any;
+      if (existing) {
+        return res.json({ ticket: existing, is_idempotent: true });
+      }
+    }
+    throw error;
+  }
+
+  const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticketId) as any;
+
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, title, content, related_id)
+    VALUES (?, ?, 'appointment', '预约签到取号成功', ?, ?)
+  `).run(
+    uuidv4(),
+    appointment.user_id,
+    `您的${appointment.service_item_name}预约已签到取号，号票：${ticket.ticket_number}`,
+    id
+  );
+
+  db.prepare(`
+    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
+    VALUES (?, ?, '预约签到取号', '预约', ?)
+  `).run(
+    req.user!.id,
+    req.user!.name,
+    `预约签到取号${ticket.ticket_number}，事项：${appointment.service_item_name}`
+  );
+
+  res.status(201).json({ ticket, is_idempotent: false });
 });
 
 // 获取预约详情

@@ -35,6 +35,7 @@ import Evaluations from '../pages/admin/Evaluations';
 import Statistics from '../pages/admin/Statistics';
 import OperationLogs from '../pages/admin/OperationLogs';
 import AppointmentBoard from '../pages/admin/AppointmentBoard';
+import AppointmentList from '../pages/admin/AppointmentList';
 import OverdueWarningCenter from '../pages/admin/OverdueWarningCenter';
 import type { UserRole } from '../types';
 import { RoleText } from '../types';
@@ -50,6 +51,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/windows', icon: <AppstoreOutlined />, label: '窗口管理' },
     { key: '/admin/number-sources', icon: <NumberOutlined />, label: '号源管理' },
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
+    { key: '/admin/appointments', icon: <CalendarOutlined />, label: '预约列表' },
     { key: '/display', icon: <DesktopOutlined />, label: '叫号大屏', external: true },
     { key: '/admin/cases', icon: <FileTextOutlined />, label: '办件管理' },
     { key: '/admin/overdue-warning', icon: <AlertOutlined />, label: '超期预警' },
@@ -60,6 +62,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   window: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-board', icon: <CalendarOutlined />, label: '预约看板' },
+    { key: '/admin/appointments', icon: <CalendarOutlined />, label: '预约列表' },
     { key: '/admin/calling', icon: <SoundOutlined />, label: '叫号系统' },
     { key: '/display', icon: <DesktopOutlined />, label: '叫号大屏', external: true },
     { key: '/admin/case-accept', icon: <FormOutlined />, label: '办件受理' },
@@ -153,6 +156,7 @@ function AdminLayout() {
               <Route path="/windows" element={<Windows />} />
               <Route path="/number-sources" element={<NumberSources />} />
               <Route path="/appointment-board" element={<AppointmentBoard />} />
+              <Route path="/appointments" element={<AppointmentList />} />
               <Route path="/cases" element={<CaseManagement />} />
               <Route path="/evaluations" element={<Evaluations />} />
               <Route path="/statistics" element={<Statistics />} />
