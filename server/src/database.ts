@@ -203,6 +203,7 @@ export function initDatabase() {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       type TEXT NOT NULL,
+      sub_type TEXT,
       title TEXT NOT NULL,
       content TEXT,
       is_read INTEGER DEFAULT 0,

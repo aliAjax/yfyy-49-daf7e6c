@@ -1,4 +1,4 @@
-import { Card, List, Tag, Button, Space, Empty, Spin, Radio, message, Drawer, Checkbox, Divider } from 'antd';
+import { Card, List, Tag, Button, Space, Empty, Spin, Radio, message, Drawer, Checkbox, Divider, Alert } from 'antd';
 import {
   BellOutlined,
   FileTextOutlined,
@@ -8,6 +8,7 @@ import {
   CheckCircleOutlined,
   RightOutlined,
   EyeOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -28,9 +29,24 @@ const NotificationTypeIcon: Record<string, React.ReactNode> = {
 };
 
 const NotificationTypeColor: Record<string, string> = {
+
   case: 'blue',
   appointment: 'green',
   evaluation: 'orange',
+};
+
+const SubTypeActionText: Record<string, string> = {
+  appointment_confirmed: '查看预约',
+  case_accepted: '查看办件',
+  case_approved: '查看办件',
+  case_rejected: '查看办件',
+  case_completed_pending_evaluation: '去评价',
+  case_material_correction: '补充材料',
+  evaluation_reminder: '去评价',
+  case_collaboration_received: '查看办件',
+  case_collaboration_returned: '查看办件',
+  case_collaboration_completed: '查看办件',
+  case_reviewing: '查看办件',
 };
 
 interface CitizenNotificationsProps {
@@ -49,6 +65,8 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
   const [detailVisible, setDetailVisible] = useState(false);
   const [currentDetail, setCurrentDetail] = useState<Notification | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [jumpTipVisible, setJumpTipVisible] = useState(false);
+  const [jumpTipMessage, setJumpTipMessage] = useState('');
 
   useEffect(() => {
     loadNotifications();
@@ -130,6 +148,7 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
   const handleViewDetail = async (item: Notification) => {
     setDetailVisible(true);
     setCurrentDetail(item);
+    setJumpTipVisible(false);
     if (item.is_read === 0) {
       try {
         await api.post(`/notifications/${item.id}/read`);
@@ -154,14 +173,135 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
     }
   };
 
-  const handleJumpToRelated = (item: Notification) => {
-    if (item.type === 'case' && item.related_id) {
-      navigate(`/citizen/cases/${item.related_id}`);
-    } else if (item.type === 'appointment') {
-      navigate('/citizen/appointments');
-    } else if (item.type === 'evaluation') {
-      navigate('/citizen/evaluations');
+  const validateRelatedData = async (item: Notification): Promise<boolean> => {
+    if (!item.related_id) {
+      return false;
     }
+    try {
+      if (item.type === 'case' || item.sub_type?.startsWith('case_') || item.sub_type === 'evaluation_reminder') {
+        await api.get(`/cases/${item.related_id}`);
+        return true;
+      }
+      if (item.type === 'appointment' || item.sub_type?.startsWith('appointment_')) {
+        await api.get(`/appointments/${item.related_id}`);
+        return true;
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 403) {
+        return false;
+      }
+    }
+    return false;
+  };
+
+  const getTipMessage = (item: Notification): string => {
+    if (!item.related_id) {
+      return '该通知暂未关联具体业务数据，您可以在此查看通知详情。';
+    }
+    if (item.type === 'case' || item.sub_type?.startsWith('case_') || item.sub_type === 'evaluation_reminder') {
+      return '关联的办件数据不存在或您暂无权限查看，您可以在此查看通知详情。';
+    }
+    if (item.type === 'appointment' || item.sub_type?.startsWith('appointment_')) {
+      return '关联的预约数据不存在或您暂无权限查看，您可以在此查看通知详情。';
+    }
+    return '关联的业务数据不存在，您可以在此查看通知详情。';
+  };
+
+  const handleJumpToRelated = async (item: Notification) => {
+    const subType = item.sub_type || '';
+
+    if (!item.related_id) {
+      setJumpTipMessage(getTipMessage(item));
+      setJumpTipVisible(true);
+      if (!detailVisible) {
+        setDetailVisible(true);
+        setCurrentDetail(item);
+      }
+      return;
+    }
+
+    const dataExists = await validateRelatedData(item);
+    if (!dataExists) {
+      setJumpTipMessage(getTipMessage(item));
+      setJumpTipVisible(true);
+      if (!detailVisible) {
+        setDetailVisible(true);
+        setCurrentDetail(item);
+      }
+      return;
+    }
+
+    if (subType === 'appointment_confirmed') {
+      navigate('/citizen/appointments');
+      return;
+    }
+
+    if (
+      subType === 'case_completed_pending_evaluation' ||
+      subType === 'evaluation_reminder'
+    ) {
+      navigate(`/citizen/cases/${item.related_id}?evaluate=true`);
+      return;
+    }
+
+    if (
+      subType === 'case_accepted' ||
+      subType === 'case_approved' ||
+      subType === 'case_rejected' ||
+      subType === 'case_material_correction' ||
+      subType === 'case_collaboration_received' ||
+      subType === 'case_collaboration_returned' ||
+      subType === 'case_collaboration_completed' ||
+      subType === 'case_reviewing' ||
+      item.type === 'case'
+    ) {
+      navigate(`/citizen/cases/${item.related_id}`);
+      return;
+    }
+
+    if (item.type === 'appointment') {
+      navigate('/citizen/appointments');
+      return;
+    }
+
+    if (item.type === 'evaluation') {
+      navigate('/citizen/evaluations');
+      return;
+    }
+
+    navigate(`/citizen/cases/${item.related_id}`);
+  };
+
+  const getActionButtonText = (item: Notification): string => {
+    if (item.sub_type && SubTypeActionText[item.sub_type]) {
+      return SubTypeActionText[item.sub_type];
+    }
+    if (item.type === 'case') {
+      return '查看办件';
+    }
+    if (item.type === 'appointment') {
+      return '查看预约';
+    }
+    if (item.type === 'evaluation') {
+      return '查看评价';
+    }
+    return '查看详情';
+  };
+
+  const hasActionButton = (item: Notification): boolean => {
+    if (item.sub_type && SubTypeActionText[item.sub_type]) {
+      return true;
+    }
+    if (item.type === 'case' && item.related_id) {
+      return true;
+    }
+    if (item.type === 'appointment') {
+      return true;
+    }
+    if (item.type === 'evaluation') {
+      return true;
+    }
+    return false;
   };
 
   const handleSelectAll = (checked: boolean) => {
@@ -252,9 +392,9 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
               标记已读
             </Button>
           )}
-          {item.type === 'case' && item.related_id && (
+          {hasActionButton(item) && (
             <Button type="link" size="small" onClick={() => handleJumpToRelated(item)}>
-              查看办件 <RightOutlined style={{ fontSize: 12 }} />
+              {getActionButtonText(item)} <RightOutlined style={{ fontSize: 12 }} />
             </Button>
           )}
           <Button type="text" size="small" icon={<EyeOutlined />}>
@@ -352,6 +492,18 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
       >
         {currentDetail && (
           <div>
+            {jumpTipVisible && (
+              <Alert
+                icon={<InfoCircleOutlined />}
+                message="温馨提示"
+                description={jumpTipMessage}
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+                closable
+                onClose={() => setJumpTipVisible(false)}
+              />
+            )}
             <div style={{ marginBottom: 16 }}>
               <Tag color={NotificationTypeColor[currentDetail.type]}>
                 {NotificationTypeText[currentDetail.type]}
@@ -366,13 +518,13 @@ function CitizenNotifications({ onUnreadCountChange }: CitizenNotificationsProps
             <div style={{ color: '#999', fontSize: 13, marginBottom: 24 }}>
               发送时间：{dayjs(currentDetail.created_at).format('YYYY-MM-DD HH:mm:ss')}
             </div>
-            {currentDetail.type === 'case' && currentDetail.related_id && (
+            {hasActionButton(currentDetail) && (
               <Button
                 type="primary"
                 icon={<RightOutlined />}
                 onClick={() => handleJumpToRelated(currentDetail)}
               >
-                查看关联办件
+                {getActionButtonText(currentDetail)}
               </Button>
             )}
           </div>

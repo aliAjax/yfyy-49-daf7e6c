@@ -174,8 +174,8 @@ router.post('/', (req: AuthRequest, res) => {
   const appointment = db.prepare('SELECT * FROM appointments WHERE id = ?').get(id);
 
   db.prepare(`
-    INSERT INTO notifications (id, user_id, type, title, content, related_id)
-    VALUES (?, ?, 'appointment', '预约成功', ?, ?)
+    INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+    VALUES (?, ?, 'appointment', 'appointment_confirmed', '预约成功', ?, ?)
   `).run(uuidv4(), req.user!.id, `您已成功预约${serviceItem.name}，预约日期：${appointment_date}`, id);
 
   db.prepare(`

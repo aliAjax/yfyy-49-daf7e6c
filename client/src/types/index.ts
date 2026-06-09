@@ -227,6 +227,7 @@ export interface Notification {
   id: string;
   user_id: string;
   type: string;
+  sub_type?: string;
   title: string;
   content?: string;
   is_read: number;

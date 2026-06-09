@@ -336,6 +336,13 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
 
   tx();
 
+  if (caseItem.user_id && hasRejected) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_material_correction', '材料需补正', ?, ?)
+    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}材料需补正，请及时补充相关材料`, id);
+  }
+
   res.json({ message: '材料审核完成' });
 });
 
@@ -369,8 +376,8 @@ router.post('/:id/accept', requireRoles('window', 'admin'), (req: AuthRequest, r
 
   if (caseItem.user_id) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件已受理', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_accepted', '办件已受理', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已受理`, id);
   }
 
@@ -418,8 +425,8 @@ router.post('/:id/approve', requireRoles('approver', 'admin'), (req: AuthRequest
 
   if (caseItem.user_id) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件审批通过', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_approved', '办件审批通过', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已审批通过`, id);
   }
 
@@ -462,8 +469,8 @@ router.post('/:id/reject', requireRoles('approver', 'admin'), (req: AuthRequest,
 
   if (caseItem.user_id) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件被驳回', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_rejected', '办件被驳回', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}被驳回：${comment || '审批驳回'}`, id);
   }
 
@@ -544,8 +551,8 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
 
   if (targetUserId) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '收到协同办件', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_collaboration_received', '收到协同办件', ?, ?)
     `).run(uuidv4(), targetUserId, 
       `您收到一件协同办理的办件：${caseItem.case_number}`, id);
   }
@@ -673,8 +680,8 @@ router.post('/:id/return', requireRoles('approver', 'admin'), (req: AuthRequest,
 
   if (sourceUserId) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '协同办件已退回', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_collaboration_returned', '协同办件已退回', ?, ?)
     `).run(uuidv4(), sourceUserId, 
       `办件${caseItem.case_number}已被退回`, id);
   }
@@ -753,16 +760,16 @@ router.post('/:id/collaborate-complete', requireRoles('approver', 'admin'), (req
 
   if (sourceUserId) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '协同办件已办结', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_collaboration_completed', '协同办件已办结', ?, ?)
     `).run(uuidv4(), sourceUserId, 
       `办件${caseItem.case_number}协同办理完成`, id);
   }
 
   if (caseItem.user_id && !sourceDepartmentId) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件审批通过', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_approved', '办件审批通过', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已审批通过`, id);
   }
 
@@ -961,8 +968,8 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
 
   if (caseItem.user_id) {
     db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件已办结', ?, ?)
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_completed_pending_evaluation', '办件已办结', ?, ?)
     `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已办结，请评价`, id);
   }
 

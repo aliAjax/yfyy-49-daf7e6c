@@ -1,7 +1,7 @@
 import { Card, Descriptions, Tag, Timeline, Button, Spin, Modal, Form, Rate, Input, message, List, Space } from 'antd';
 import { ArrowLeftOutlined, StarOutlined, PrinterOutlined } from '@ant-design/icons';
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import type { Case, CaseMaterial, CaseFlow, Evaluation, ServiceItemMaterial } from '../../types';
 import { CaseStatusText, CaseFlowActionText } from '../../types';
@@ -14,6 +14,7 @@ const { TextArea } = Input;
 function CitizenCaseDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [materials, setMaterials] = useState<CaseMaterial[]>([]);
@@ -30,6 +31,13 @@ function CitizenCaseDetail() {
       loadEvaluation();
     }
   }, [id]);
+
+  useEffect(() => {
+    const shouldOpenEvaluate = searchParams.get('evaluate') === 'true';
+    if (shouldOpenEvaluate && caseData?.status === 'completed' && !evaluation) {
+      setEvalModalVisible(true);
+    }
+  }, [searchParams, caseData, evaluation]);
 
   const loadCaseDetail = async () => {
     setLoading(true);
