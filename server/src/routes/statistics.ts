@@ -8,6 +8,78 @@ const router = Router();
 router.use(authMiddleware);
 router.use(requireRoles('admin', 'approver'));
 
+function conversionBaseWhere(req: AuthRequest, departmentId?: string) {
+  let where = 'WHERE 1=1';
+  const params: any[] = [];
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    where += ' AND si.department_id = ?';
+    params.push(req.user!.department_id);
+  }
+  if (departmentId) {
+    where += ' AND si.department_id = ?';
+    params.push(departmentId);
+  }
+
+  return { where, params };
+}
+
+function appointmentConversionSelect(groupSelect: string, groupBy: string, groupOrder: string) {
+  return `
+    SELECT
+      ${groupSelect},
+      COUNT(DISTINCT a.id) as appointment_count,
+      COUNT(DISTINCT CASE WHEN t.id IS NOT NULL OR a.status = 'completed' THEN a.id END) as checked_in_count,
+      COUNT(DISTINCT c.id) as case_count,
+      COUNT(DISTINCT CASE WHEN c.status = 'completed' THEN c.id END) as completed_count,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT CASE WHEN t.id IS NOT NULL OR a.status = 'completed' THEN a.id END) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as check_in_rate,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT c.id) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as case_rate,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT CASE WHEN c.status = 'completed' THEN c.id END) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as completion_rate
+    FROM appointments a
+    LEFT JOIN service_items si ON a.service_item_id = si.id
+    LEFT JOIN departments d ON si.department_id = d.id
+    LEFT JOIN tickets t ON (
+      t.appointment_id = a.id
+      OR (
+        t.appointment_id IS NULL
+        AND t.service_item_id = a.service_item_id
+        AND (t.user_id = a.user_id OR (t.user_id IS NULL AND a.user_id IS NULL))
+        AND DATE(t.created_at) = a.appointment_date
+        AND (
+          (a.applicant_phone IS NOT NULL AND t.applicant_phone = a.applicant_phone)
+          OR (a.applicant_name IS NOT NULL AND t.applicant_name = a.applicant_name)
+        )
+      )
+    )
+    LEFT JOIN cases c ON (
+      c.ticket_id = t.id
+      OR (
+        c.ticket_id IS NULL
+        AND c.service_item_id = a.service_item_id
+        AND (c.user_id = a.user_id OR (c.user_id IS NULL AND a.user_id IS NULL))
+        AND datetime(c.created_at) >= datetime(a.appointment_date)
+        AND datetime(c.created_at) < datetime(a.appointment_date, '+2 day')
+        AND (
+          (a.applicant_phone IS NOT NULL AND c.applicant_phone = a.applicant_phone)
+          OR (a.applicant_name IS NOT NULL AND c.applicant_name = a.applicant_name)
+        )
+      )
+    )
+    __WHERE__
+    GROUP BY ${groupBy}
+    ORDER BY ${groupOrder}
+  `;
+}
+
 // 总览统计
 router.get('/overview', (req: AuthRequest, res) => {
   const { department_id, start_date, end_date } = req.query as any;
@@ -326,6 +398,125 @@ router.get('/appointment-stats', (req: AuthRequest, res) => {
   });
 
   res.json({ stats: result });
+});
+
+// 预约转化率统计
+router.get('/appointment-conversion', (req: AuthRequest, res) => {
+  const { department_id, start_date, end_date } = req.query as any;
+  const scoped = conversionBaseWhere(req, department_id);
+  let where = scoped.where;
+  const params = [...scoped.params];
+
+  if (start_date) {
+    where += ' AND DATE(a.appointment_date) >= ?';
+    params.push(start_date);
+  }
+  if (end_date) {
+    where += ' AND DATE(a.appointment_date) <= ?';
+    params.push(end_date);
+  }
+
+  const departmentSql = appointmentConversionSelect(
+    "d.id as id, COALESCE(d.name, '未分配科室') as name",
+    'd.id, d.name',
+    'appointment_count DESC, name ASC'
+  ).replace('__WHERE__', where);
+
+  const serviceSql = appointmentConversionSelect(
+    "si.id as id, COALESCE(si.name, '未知服务事项') as name, si.code as code, COALESCE(d.name, '未分配科室') as department_name",
+    'si.id, si.name, si.code, d.name',
+    'appointment_count DESC, name ASC'
+  ).replace('__WHERE__', where);
+
+  const trendSql = appointmentConversionSelect(
+    'DATE(a.appointment_date) as date',
+    'DATE(a.appointment_date)',
+    'date ASC'
+  ).replace('__WHERE__', where);
+
+  const summary = db.prepare(`
+    SELECT
+      COUNT(DISTINCT a.id) as appointment_count,
+      COUNT(DISTINCT CASE WHEN t.id IS NOT NULL OR a.status = 'completed' THEN a.id END) as checked_in_count,
+      COUNT(DISTINCT c.id) as case_count,
+      COUNT(DISTINCT CASE WHEN c.status = 'completed' THEN c.id END) as completed_count,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT CASE WHEN t.id IS NOT NULL OR a.status = 'completed' THEN a.id END) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as check_in_rate,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT c.id) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as case_rate,
+      CASE WHEN COUNT(DISTINCT a.id) > 0
+        THEN ROUND(COUNT(DISTINCT CASE WHEN c.status = 'completed' THEN c.id END) * 100.0 / COUNT(DISTINCT a.id), 2)
+        ELSE 0
+      END as completion_rate
+    FROM appointments a
+    LEFT JOIN service_items si ON a.service_item_id = si.id
+    LEFT JOIN tickets t ON (
+      t.appointment_id = a.id
+      OR (
+        t.appointment_id IS NULL
+        AND t.service_item_id = a.service_item_id
+        AND (t.user_id = a.user_id OR (t.user_id IS NULL AND a.user_id IS NULL))
+        AND DATE(t.created_at) = a.appointment_date
+        AND (
+          (a.applicant_phone IS NOT NULL AND t.applicant_phone = a.applicant_phone)
+          OR (a.applicant_name IS NOT NULL AND t.applicant_name = a.applicant_name)
+        )
+      )
+    )
+    LEFT JOIN cases c ON (
+      c.ticket_id = t.id
+      OR (
+        c.ticket_id IS NULL
+        AND c.service_item_id = a.service_item_id
+        AND (c.user_id = a.user_id OR (c.user_id IS NULL AND a.user_id IS NULL))
+        AND datetime(c.created_at) >= datetime(a.appointment_date)
+        AND datetime(c.created_at) < datetime(a.appointment_date, '+2 day')
+        AND (
+          (a.applicant_phone IS NOT NULL AND c.applicant_phone = a.applicant_phone)
+          OR (a.applicant_name IS NOT NULL AND c.applicant_name = a.applicant_name)
+        )
+      )
+    )
+    ${where}
+  `).get(...params) as any;
+
+  const departments = db.prepare(departmentSql).all(...params) as any[];
+  const serviceItems = db.prepare(serviceSql).all(...params) as any[];
+  const trendRows = db.prepare(trendSql).all(...params) as any[];
+  const trend = start_date && end_date
+    ? Array.from({ length: dayjs(end_date).diff(dayjs(start_date), 'day') + 1 }, (_, index) => {
+        const date = dayjs(start_date).add(index, 'day').format('YYYY-MM-DD');
+        return trendRows.find((item: any) => item.date === date) || {
+          date,
+          appointment_count: 0,
+          checked_in_count: 0,
+          case_count: 0,
+          completed_count: 0,
+          check_in_rate: 0,
+          case_rate: 0,
+          completion_rate: 0
+        };
+      })
+    : trendRows;
+
+  res.json({
+    summary: summary || {
+      appointment_count: 0,
+      checked_in_count: 0,
+      case_count: 0,
+      completed_count: 0,
+      check_in_rate: 0,
+      case_rate: 0,
+      completion_rate: 0
+    },
+    departments,
+    service_items: serviceItems,
+    trend
+  });
 });
 
 export default router;

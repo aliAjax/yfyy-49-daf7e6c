@@ -14,6 +14,31 @@ import api from '../../api';
 
 const { RangePicker } = DatePicker;
 
+interface AppointmentConversionRow {
+  id?: string;
+  name: string;
+  code?: string;
+  department_name?: string;
+  appointment_count: number;
+  checked_in_count: number;
+  case_count: number;
+  completed_count: number;
+  check_in_rate: number;
+  case_rate: number;
+  completion_rate: number;
+}
+
+interface AppointmentConversionTrend {
+  date: string;
+  appointment_count: number;
+  checked_in_count: number;
+  case_count: number;
+  completed_count: number;
+  check_in_rate: number;
+  case_rate: number;
+  completion_rate: number;
+}
+
 function Statistics() {
   const [loading, setLoading] = useState(false);
   const [departmentId, setDepartmentId] = useState<string>('');
@@ -36,6 +61,26 @@ function Statistics() {
   const [satisfactionData, setSatisfactionData] = useState({
     satisfied: 0,
     dissatisfied: 0,
+  });
+  const [appointmentConversion, setAppointmentConversion] = useState<{
+    summary: AppointmentConversionRow;
+    departments: AppointmentConversionRow[];
+    serviceItems: AppointmentConversionRow[];
+    trend: AppointmentConversionTrend[];
+  }>({
+    summary: {
+      name: '全部',
+      appointment_count: 0,
+      checked_in_count: 0,
+      case_count: 0,
+      completed_count: 0,
+      check_in_rate: 0,
+      case_rate: 0,
+      completion_rate: 0,
+    },
+    departments: [],
+    serviceItems: [],
+    trend: [],
   });
   const [departments, setDepartments] = useState<any[]>([]);
 
@@ -65,11 +110,12 @@ function Statistics() {
         params.end_date = dateRange[1].format('YYYY-MM-DD');
       }
 
-      const [overviewRes, trendRes, deptRes, serviceRes] = await Promise.all([
+      const [overviewRes, trendRes, deptRes, serviceRes, conversionRes] = await Promise.all([
         api.get('/statistics/overview', { params }),
         api.get('/statistics/trend', { params: { ...params, days: 30 } }),
         api.get('/statistics/by-department', { params }),
         api.get('/statistics/by-service-item', { params: { ...params, top: 10 } }),
+        api.get('/statistics/appointment-conversion', { params }),
       ]);
 
       setOverviewStats((overviewRes as any).stats || {
@@ -90,6 +136,21 @@ function Statistics() {
 
       setDepartmentStats((deptRes as any).departments || []);
       setServiceItemStats((serviceRes as any).service_items || []);
+      setAppointmentConversion({
+        summary: (conversionRes as any).summary || {
+          name: '全部',
+          appointment_count: 0,
+          checked_in_count: 0,
+          case_count: 0,
+          completed_count: 0,
+          check_in_rate: 0,
+          case_rate: 0,
+          completion_rate: 0,
+        },
+        departments: (conversionRes as any).departments || [],
+        serviceItems: (conversionRes as any).service_items || [],
+        trend: (conversionRes as any).trend || [],
+      });
 
       setSatisfactionData({
         satisfied: Math.round(((overviewRes as any).stats?.satisfaction_rate || 0) / 100 * ((overviewRes as any).stats?.total_evaluations || 0)),
@@ -254,6 +315,123 @@ function Statistics() {
     ],
   };
 
+  const appointmentConversionTrendOption = {
+    tooltip: {
+      trigger: 'axis',
+    },
+    legend: {
+      data: ['预约数', '签到取号数', '形成办件数', '办结数'],
+      bottom: 0,
+    },
+    grid: {
+      left: '3%',
+      right: '4%',
+      bottom: 48,
+      containLabel: true,
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: appointmentConversion.trend.map((item) => dayjs(item.date).format('MM-DD')),
+    },
+    yAxis: {
+      type: 'value',
+      minInterval: 1,
+    },
+    series: [
+      {
+        name: '预约数',
+        type: 'line',
+        smooth: true,
+        data: appointmentConversion.trend.map((item) => item.appointment_count),
+      },
+      {
+        name: '签到取号数',
+        type: 'line',
+        smooth: true,
+        data: appointmentConversion.trend.map((item) => item.checked_in_count),
+      },
+      {
+        name: '形成办件数',
+        type: 'line',
+        smooth: true,
+        data: appointmentConversion.trend.map((item) => item.case_count),
+      },
+      {
+        name: '办结数',
+        type: 'line',
+        smooth: true,
+        data: appointmentConversion.trend.map((item) => item.completed_count),
+      },
+    ],
+  };
+
+  const renderRate = (rate: number) => {
+    const color = rate >= 80 ? '#52c41a' : rate >= 50 ? '#faad14' : '#ff4d4f';
+    return <Tag color={color}>{Number(rate || 0).toFixed(1)}%</Tag>;
+  };
+
+  const conversionColumns = [
+    {
+      title: '名称',
+      dataIndex: 'name',
+      key: 'name',
+      width: 180,
+    },
+    {
+      title: '所属科室',
+      dataIndex: 'department_name',
+      key: 'department_name',
+      width: 120,
+      render: (value: string) => value || '-',
+    },
+    {
+      title: '预约数',
+      dataIndex: 'appointment_count',
+      key: 'appointment_count',
+      width: 90,
+    },
+    {
+      title: '签到取号数',
+      dataIndex: 'checked_in_count',
+      key: 'checked_in_count',
+      width: 110,
+    },
+    {
+      title: '形成办件数',
+      dataIndex: 'case_count',
+      key: 'case_count',
+      width: 110,
+    },
+    {
+      title: '办结数',
+      dataIndex: 'completed_count',
+      key: 'completed_count',
+      width: 90,
+    },
+    {
+      title: '签到率',
+      dataIndex: 'check_in_rate',
+      key: 'check_in_rate',
+      width: 90,
+      render: renderRate,
+    },
+    {
+      title: '办件转化率',
+      dataIndex: 'case_rate',
+      key: 'case_rate',
+      width: 110,
+      render: renderRate,
+    },
+    {
+      title: '办结转化率',
+      dataIndex: 'completion_rate',
+      key: 'completion_rate',
+      width: 110,
+      render: renderRate,
+    },
+  ];
+
   const serviceItemColumns = [
     {
       title: '排名',
@@ -414,6 +592,53 @@ function Statistics() {
           </Card>
         </Col>
       </Row>
+
+      <Card title="预约转化率" style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col span={6}>
+            <Statistic title="预约数" value={appointmentConversion.summary.appointment_count} />
+          </Col>
+          <Col span={6}>
+            <Statistic title="签到取号数" value={appointmentConversion.summary.checked_in_count} />
+          </Col>
+          <Col span={6}>
+            <Statistic title="形成办件数" value={appointmentConversion.summary.case_count} />
+          </Col>
+          <Col span={6}>
+            <Statistic
+              title="办结转化率"
+              value={appointmentConversion.summary.completion_rate}
+              precision={1}
+              suffix="%"
+            />
+          </Col>
+        </Row>
+        <ReactECharts option={appointmentConversionTrendOption} style={{ height: 320, marginBottom: 16 }} />
+        <Row gutter={[16, 16]}>
+          <Col span={24}>
+            <h3 style={{ fontSize: 16, margin: '0 0 12px' }}>按科室统计</h3>
+            <Table
+              dataSource={appointmentConversion.departments}
+              columns={conversionColumns.filter((column) => column.key !== 'department_name')}
+              rowKey={(record) => record.id || record.name}
+              pagination={false}
+              size="small"
+              scroll={{ x: 840 }}
+            />
+          </Col>
+          <Col span={24}>
+            <h3 style={{ fontSize: 16, margin: '8px 0 12px' }}>按服务事项统计</h3>
+            <Table
+              dataSource={appointmentConversion.serviceItems}
+              columns={conversionColumns}
+              rowKey={(record) => record.id || `${record.department_name}-${record.name}`}
+              pagination={{ pageSize: 8 }}
+              size="small"
+              scroll={{ x: 960 }}
+            />
+          </Col>
+        </Row>
+      </Card>
 
       <Row gutter={[16, 16]}>
         <Col span={14}>
