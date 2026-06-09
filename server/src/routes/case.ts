@@ -293,7 +293,7 @@ router.post('/', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
   res.status(201).json({ case: caseItem });
 });
 
-// 材料预审
+// 材料预审（单个）
 router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
   const { id } = req.params;
   const { material_id, status, review_comment } = req.body;
@@ -347,6 +347,128 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
   }
 
   res.json({ message: '材料审核完成' });
+});
+
+// 批量材料审核
+router.post('/:id/material-batch-review', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { reviews } = req.body;
+
+  if (!Array.isArray(reviews) || reviews.length === 0) {
+    return res.status(400).json({ message: '请至少选择一个材料进行审核' });
+  }
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  const reviewMap = new Map();
+  for (const review of reviews) {
+    if (!review.material_id || !review.status) {
+      return res.status(400).json({ message: '审核数据不完整' });
+    }
+    if (!['approved', 'rejected'].includes(review.status)) {
+      return res.status(400).json({ message: '审核状态无效' });
+    }
+    if (review.status === 'rejected' && !review.review_comment) {
+      return res.status(400).json({ message: '驳回材料必须填写审核意见' });
+    }
+    reviewMap.set(review.material_id, review);
+  }
+
+  const materialIds = Array.from(reviewMap.keys());
+  const placeholders = materialIds.map(() => '?').join(',');
+  const existingMaterials = db.prepare(
+    `SELECT * FROM case_materials WHERE case_id = ? AND id IN (${placeholders})`
+  ).all(id, ...materialIds) as any[];
+
+  if (existingMaterials.length !== materialIds.length) {
+    return res.status(404).json({ message: '部分材料不存在' });
+  }
+
+  for (const material of existingMaterials) {
+    if (material.status !== 'pending') {
+      return res.status(400).json({ message: `材料「${material.name}」已审核，无法重复审核` });
+    }
+  }
+
+  let materialCorrectionNeeded = false;
+  let caseStatus: CaseStatus = caseItem.status;
+
+  const tx = db.transaction(() => {
+    const updateStmt = db.prepare(`
+      UPDATE case_materials 
+      SET status = ?, review_comment = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+
+    for (const material of existingMaterials) {
+      const review = reviewMap.get(material.id);
+      updateStmt.run(review.status, review.review_comment || null, req.user!.id, material.id);
+    }
+
+    const allMaterials = db.prepare('SELECT status FROM case_materials WHERE case_id = ?').all(id);
+    const allReviewed = allMaterials.every((m: any) => m.status !== 'pending');
+    const hasRejected = allMaterials.some((m: any) => m.status === 'rejected');
+    const justReviewedHasRejected = Array.from(reviewMap.values()).some((r: any) => r.status === 'rejected');
+
+    if (allReviewed) {
+      caseStatus = hasRejected ? 'material_correction' : 'accepting';
+      materialCorrectionNeeded = hasRejected;
+      db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(caseStatus, id);
+
+      const rejectedNames = existingMaterials
+        .filter((m) => reviewMap.get(m.id)?.status === 'rejected')
+        .map((m) => m.name);
+
+      let comment = '';
+      if (allMaterials.length === existingMaterials.length) {
+        comment = hasRejected
+          ? `材料批量审核：${rejectedNames.length}份不通过，需要补正`
+          : '材料批量审核：全部通过';
+      } else {
+        comment = hasRejected
+          ? `材料批量审核：本次审核${existingMaterials.length}份，其中${rejectedNames.length}份不通过，尚有材料待审核`
+          : `材料批量审核：本次审核${existingMaterials.length}份全部通过，尚有材料待审核`;
+      }
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+        VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
+      `).run(uuidv4(), id, req.user!.id, caseStatus, comment);
+    } else {
+      const rejectedNames = existingMaterials
+        .filter((m) => reviewMap.get(m.id)?.status === 'rejected')
+        .map((m) => m.name);
+
+      const comment = justReviewedHasRejected
+        ? `材料批量审核：本次审核${existingMaterials.length}份，其中${rejectedNames.length}份不通过，尚有材料待审核`
+        : `材料批量审核：本次审核${existingMaterials.length}份全部通过，尚有材料待审核`;
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+        VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
+      `).run(uuidv4(), id, req.user!.id, caseItem.status, comment);
+    }
+  });
+
+  tx();
+
+  if (caseItem.user_id && materialCorrectionNeeded) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_material_correction', '材料需补正', ?, ?)
+    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}材料需补正，请及时补充相关材料`, id);
+  }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '批量审核材料', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `办件${caseItem.case_number}批量审核${existingMaterials.length}份材料`);
+
+  res.json({ message: '批量审核完成', case_status: caseStatus });
 });
 
 // 受理办件
@@ -926,24 +1048,171 @@ router.get('/department/:department_id/approvers', requireRoles('approver', 'adm
   res.json({ users });
 });
 
-// 添加材料
+// 添加材料（群众补正材料时会触发办件状态更新）
 router.post('/:id/materials', (req: AuthRequest, res) => {
   const { id } = req.params;
-  const { name, type, file_url } = req.body;
+  const { name, type, file_url, is_correction } = req.body;
   
-  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id);
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
   if (!caseItem) {
     return res.status(404).json({ message: '办件不存在' });
   }
 
+  if (req.user!.role === 'citizen' && caseItem.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权操作此办件' });
+  }
+
   const materialId = uuidv4();
-  db.prepare(`
-    INSERT INTO case_materials (id, case_id, name, type, file_url, status)
-    VALUES (?, ?, ?, ?, ?, 'pending')
-  `).run(materialId, id, name, type || null, file_url || null);
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO case_materials (id, case_id, name, type, file_url, status)
+      VALUES (?, ?, ?, ?, ?, 'pending')
+    `).run(materialId, id, name, type || null, file_url || null);
+
+    if (is_correction && caseItem.status === 'material_correction') {
+      db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run('material_reviewing', id);
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+        VALUES (?, ?, ?, NULL, 'material_correction', ?, ?)
+      `).run(uuidv4(), id, req.user!.id, 'material_reviewing', 
+        `群众补充/补正材料：${name}`);
+    }
+  });
+
+  tx();
 
   const material = db.prepare('SELECT * FROM case_materials WHERE id = ?').get(materialId);
   res.status(201).json({ material });
+});
+
+// 群众补正材料（批量补充）
+router.post('/:id/materials-correction', requireRoles('citizen'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { materials } = req.body;
+
+  if (!Array.isArray(materials) || materials.length === 0) {
+    return res.status(400).json({ message: '请至少补充一份材料' });
+  }
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (caseItem.user_id !== req.user!.id) {
+    return res.status(403).json({ message: '无权操作此办件' });
+  }
+
+  if (caseItem.status !== 'material_correction') {
+    return res.status(400).json({ message: '当前状态不支持补正材料' });
+  }
+
+  const tx = db.transaction(() => {
+    for (const mat of materials) {
+      if (!mat.name) continue;
+      db.prepare(`
+        INSERT INTO case_materials (id, case_id, name, type, file_url, status)
+        VALUES (?, ?, ?, ?, ?, 'pending')
+      `).run(uuidv4(), id, mat.name, mat.type || null, mat.file_url || null);
+    }
+
+    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run('material_reviewing', id);
+
+    const materialNames = materials.map((m: any) => m.name).filter(Boolean).join('、');
+    db.prepare(`
+      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+      VALUES (?, ?, ?, NULL, 'material_correction', ?, ?)
+    `).run(uuidv4(), id, req.user!.id, 'material_reviewing', 
+      `群众批量补正材料：${materialNames}`);
+  });
+
+  tx();
+
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+    VALUES (?, ?, 'case', 'case_material_submitted', '材料已补正', ?, ?)
+  `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已补正材料，等待审核`, id);
+
+  res.json({ message: '材料补正成功' });
+});
+
+// 单个材料审核
+router.post('/:id/material-review-single', requireRoles('window', 'approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { material_id, status, review_comment } = req.body;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  const material = db.prepare('SELECT * FROM case_materials WHERE id = ? AND case_id = ?')
+    .get(material_id, id) as any;
+  if (!material) {
+    return res.status(404).json({ message: '材料不存在' });
+  }
+
+  if (material.status !== 'pending') {
+    return res.status(400).json({ message: '该材料已审核' });
+  }
+
+  if (status === 'rejected' && !review_comment) {
+    return res.status(400).json({ message: '驳回材料必须填写审核意见' });
+  }
+
+  let materialCorrectionNeeded = false;
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE case_materials 
+      SET status = ?, review_comment = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(status, review_comment || null, req.user!.id, material_id);
+
+    const allMaterials = db.prepare('SELECT status FROM case_materials WHERE case_id = ?').all(id);
+    const allReviewed = allMaterials.every((m: any) => m.status !== 'pending');
+    const hasRejected = allMaterials.some((m: any) => m.status === 'rejected');
+
+    let caseStatus: CaseStatus = caseItem.status;
+    if (allReviewed) {
+      caseStatus = hasRejected ? 'material_correction' : 'accepting';
+      materialCorrectionNeeded = hasRejected;
+      db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(caseStatus, id);
+
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+        VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
+      `).run(uuidv4(), id, req.user!.id, caseStatus, 
+        hasRejected ? `材料「${material.name}」审核不通过，需要补正` : `材料「${material.name}」审核通过，全部材料审核完成`);
+    } else {
+      db.prepare(`
+        INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
+        VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
+      `).run(uuidv4(), id, req.user!.id, caseItem.status, 
+        status === 'rejected' ? `材料「${material.name}」审核不通过` : `材料「${material.name}」审核通过`);
+    }
+  });
+
+  tx();
+
+  if (caseItem.user_id && materialCorrectionNeeded) {
+    db.prepare(`
+      INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+      VALUES (?, ?, 'case', 'case_material_correction', '材料需补正', ?, ?)
+    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}材料需补正，请及时补充相关材料`, id);
+  }
+
+  db.prepare(`
+    INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+    VALUES (?, ?, ?, '审核材料', '办件管理', ?)
+  `).run(uuidv4(), req.user!.id, req.user!.name, `办件${caseItem.case_number}审核材料：${material.name}（${status === 'approved' ? '通过' : '驳回'}）`);
+
+  res.json({ message: '材料审核完成' });
 });
 
 // 办结
@@ -984,7 +1253,7 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
   res.json({ message: '办结成功' });
 });
 
-// 超期预警列表
+// 超期预警列表（增强版：返回催办相关信息）
 router.get('/warnings/overdue', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
   const { department_id, days = 3 } = req.query as any;
   
@@ -992,7 +1261,9 @@ router.get('/warnings/overdue', requireRoles('approver', 'admin'), (req: AuthReq
   
   let sql = `
     SELECT c.*, si.name as service_item_name, d.name as department_name,
-      u.name as user_name
+      u.name as user_name,
+      (SELECT COUNT(*) FROM case_urge_records cur WHERE cur.case_id = c.id) as urge_count,
+      (SELECT MAX(created_at) FROM case_urge_records cur WHERE cur.case_id = c.id) as last_urge_time
     FROM cases c
     LEFT JOIN service_items si ON c.service_item_id = si.id
     LEFT JOIN departments d ON c.department_id = d.id
@@ -1016,6 +1287,223 @@ router.get('/warnings/overdue', requireRoles('approver', 'admin'), (req: AuthReq
   const cases = db.prepare(sql).all(...params);
 
   res.json({ cases });
+});
+
+// 获取办件催办历史记录
+router.get('/:id/urge-records', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权查看其他科室的办件' });
+  }
+
+  const records = db.prepare(`
+    SELECT ur.*, c.case_number
+    FROM case_urge_records ur
+    LEFT JOIN cases c ON ur.case_id = c.id
+    WHERE ur.case_id = ?
+    ORDER BY ur.created_at DESC
+  `).all(id);
+
+  res.json({ records });
+});
+
+// 检查是否短时间内重复催办（用于前端提示）
+router.get('/:id/urge-check', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { minutes = 30 } = req.query as any;
+  
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权操作其他科室的办件' });
+  }
+
+  const checkTime = dayjs().subtract(Number(minutes) || 30, 'minute').format('YYYY-MM-DD HH:mm:ss');
+
+  const lastUrge = db.prepare(`
+    SELECT ur.*, u.name as urge_user_name
+    FROM case_urge_records ur
+    LEFT JOIN users u ON ur.urge_user_id = u.id
+    WHERE ur.case_id = ? AND ur.created_at >= ?
+    ORDER BY ur.created_at DESC LIMIT 1
+  `).get(id, checkTime) as any;
+
+  res.json({
+    has_recent_urge: !!lastUrge,
+    last_urge: lastUrge || null
+  });
+});
+
+// 创建催办记录
+router.post('/:id/urge', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { id } = req.params;
+  const { content, target_user_id } = req.body;
+  let { target_department_id } = req.body;
+  
+  if (!content || !content.trim()) {
+    return res.status(400).json({ message: '请输入催办内容' });
+  }
+
+  const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id) as any;
+  if (!caseItem) {
+    return res.status(404).json({ message: '办件不存在' });
+  }
+
+  if (req.user!.role === 'approver' && req.user!.department_id && caseItem.department_id !== req.user!.department_id) {
+    return res.status(403).json({ message: '无权催办其他科室的办件' });
+  }
+
+  if (!['reviewing', 'cross_department', 'material_reviewing', 'material_correction'].includes(caseItem.status)) {
+    return res.status(400).json({ message: '当前状态不支持催办' });
+  }
+
+  let targetUserName = null;
+  let targetDeptName = null;
+
+  if (!target_department_id) {
+    target_department_id = caseItem.department_id;
+  }
+
+  if (target_user_id) {
+    const targetUser = db.prepare('SELECT id, name, department_id FROM users WHERE id = ?').get(target_user_id) as any;
+    if (!targetUser) {
+      return res.status(400).json({ message: '催办对象不存在' });
+    }
+    targetUserName = targetUser.name;
+    if (!target_department_id) {
+      target_department_id = targetUser.department_id;
+    }
+  }
+
+  if (target_department_id) {
+    const targetDept = db.prepare('SELECT id, name FROM departments WHERE id = ?').get(target_department_id) as any;
+    if (targetDept) {
+      targetDeptName = targetDept.name;
+    }
+  }
+
+  const urgeId = uuidv4();
+
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO case_urge_records (id, case_id, urge_user_id, urge_user_name,
+        target_user_id, target_user_name, target_department_id, target_department_name, content)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      urgeId, id, req.user!.id, req.user!.name,
+      target_user_id || null, targetUserName,
+      target_department_id || null, targetDeptName,
+      content.trim()
+    );
+
+    if (target_user_id) {
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+        VALUES (?, ?, 'case', 'case_urge', '办件催办通知', ?, ?)
+      `).run(
+        uuidv4(),
+        target_user_id,
+        `您有一件需要及时办理：${caseItem.case_number}，催办内容：${content.trim()}`,
+        id
+      );
+    } else if (target_department_id) {
+      const deptApprovers = db.prepare(`
+        SELECT id FROM users 
+        WHERE department_id = ? AND role = 'approver' AND status = 'active'
+      `).all(target_department_id) as any[];
+      
+      for (const approver of deptApprovers) {
+        db.prepare(`
+          INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+          VALUES (?, ?, 'case', 'case_urge', '办件催办通知', ?, ?)
+        `).run(
+          uuidv4(),
+          approver.id,
+          `您科室有一件需要及时办理：${caseItem.case_number}，催办内容：${content.trim()}`,
+          id
+        );
+      }
+    }
+
+    if (caseItem.user_id) {
+      db.prepare(`
+        INSERT INTO notifications (id, user_id, type, sub_type, title, content, related_id)
+        VALUES (?, ?, 'case', 'case_urge', '办件催办通知', ?, ?)
+      `).run(
+        uuidv4(),
+        caseItem.user_id,
+        `您的办件${caseItem.case_number}已被催办，请关注办理进度`,
+        id
+      );
+    }
+
+    db.prepare(`
+      INSERT INTO operation_logs (id, user_id, user_name, action, module, detail)
+      VALUES (?, ?, ?, '催办办件', '办件管理', ?)
+    `).run(
+      uuidv4(), req.user!.id, req.user!.name, `催办办件：${caseItem.case_number}`
+    );
+  });
+
+  tx();
+
+  const record = db.prepare('SELECT * FROM case_urge_records WHERE id = ?').get(urgeId);
+  res.status(201).json({ record });
+});
+
+// 催办记录列表（带权限控制）
+router.get('/urge-records/list', requireRoles('approver', 'admin'), (req: AuthRequest, res) => {
+  const { page = 1, pageSize = 20, case_id, department_id, keyword } = req.query as any;
+  
+  let sql = `
+    SELECT ur.*, c.case_number, c.service_item_id, si.name as service_item_name
+    FROM case_urge_records ur
+    LEFT JOIN cases c ON ur.case_id = c.id
+    LEFT JOIN service_items si ON c.service_item_id = si.id
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+
+  if (req.user!.role === 'approver' && req.user!.department_id) {
+    sql += ' AND c.department_id = ?';
+    params.push(req.user!.department_id);
+  }
+
+  if (department_id && req.user!.role === 'admin') {
+    sql += ' AND c.department_id = ?';
+    params.push(department_id);
+  }
+
+  if (case_id) {
+    sql += ' AND ur.case_id = ?';
+    params.push(case_id);
+  }
+
+  if (keyword) {
+    sql += ' AND (ur.content LIKE ? OR c.case_number LIKE ? OR ur.urge_user_name LIKE ?)';
+    params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  }
+
+  const total = db.prepare(sql.replace(
+    'SELECT ur.*, c.case_number, c.service_item_id, si.name as service_item_name',
+    'SELECT COUNT(*) as count'
+  )).get(...params) as any;
+
+  sql += ' ORDER BY ur.created_at DESC LIMIT ? OFFSET ?';
+  params.push(Number(pageSize), (Number(page) - 1) * Number(pageSize));
+
+  const records = db.prepare(sql).all(...params);
+
+  res.json({ records, total: total.count, page: Number(page), pageSize: Number(pageSize) });
 });
 
 export default router;

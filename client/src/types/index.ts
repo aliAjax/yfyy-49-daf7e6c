@@ -334,6 +334,20 @@ export interface OperationLog {
   created_at: string;
 }
 
+export interface CaseUrgeRecord {
+  id: string;
+  case_id: string;
+  case_number?: string;
+  urge_user_id: string;
+  urge_user_name?: string;
+  target_user_id?: string;
+  target_user_name?: string;
+  target_department_id?: string;
+  target_department_name?: string;
+  content: string;
+  created_at: string;
+}
+
 export const RoleText: Record<UserRole, string> = {
   admin: '系统管理员',
   window: '窗口工作人员',
@@ -344,6 +358,7 @@ export const RoleText: Record<UserRole, string> = {
 export type CaseFlowAction = 
   | 'submit'
   | 'material_review'
+  | 'material_correction'
   | 'accept'
   | 'approve'
   | 'reject'
@@ -356,6 +371,7 @@ export type CaseFlowAction =
 export const CaseFlowActionText: Record<string, string> = {
   submit: '提交申请',
   material_review: '材料审核',
+  material_correction: '材料补正',
   accept: '受理',
   approve: '审批通过',
   reject: '审批驳回',

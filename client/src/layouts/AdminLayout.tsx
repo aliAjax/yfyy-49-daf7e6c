@@ -28,6 +28,7 @@ import Users from '../pages/admin/Users';
 import Windows from '../pages/admin/Windows';
 import NumberSources from '../pages/admin/NumberSources';
 import AppointmentCalendar from '../pages/admin/AppointmentCalendar';
+import AppointmentList from '../pages/admin/AppointmentList';
 import CaseManagement from '../pages/admin/CaseManagement';
 import CaseReview from '../pages/admin/CaseReview';
 import CaseCollaboration from '../pages/admin/CaseCollaboration';
@@ -35,6 +36,7 @@ import TicketQueue from '../pages/admin/TicketQueue';
 import Evaluations from '../pages/admin/Evaluations';
 import Statistics from '../pages/admin/Statistics';
 import OperationLogs from '../pages/admin/OperationLogs';
+import OverdueWarning from '../pages/admin/OverdueWarning';
 import CaseReceiptPage from '../pages/common/CaseReceiptPage';
 import type { UserRole } from '../types';
 import { RoleText } from '../types';
@@ -45,6 +47,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   admin: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-calendar', icon: <CalendarOutlined />, label: '预约日历' },
+    { key: '/admin/appointments', icon: <UnorderedListOutlined />, label: '预约列表' },
     { key: '/admin/service-items', icon: <UnorderedListOutlined />, label: '事项管理' },
     { key: '/admin/departments', icon: <ApartmentOutlined />, label: '科室管理' },
     { key: '/admin/users', icon: <UserOutlined />, label: '用户管理' },
@@ -52,6 +55,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/number-sources', icon: <NumberOutlined />, label: '号源管理' },
     { key: '/admin/cases', icon: <FileTextOutlined />, label: '办件管理' },
     { key: '/admin/collaboration', icon: <SwapOutlined />, label: '协同待办' },
+    { key: '/admin/overdue-warning', icon: <ClockCircleOutlined />, label: '超期预警中心' },
     { key: '/admin/evaluations', icon: <StarOutlined />, label: '评价管理' },
     { key: '/admin/statistics', icon: <BarChartOutlined />, label: '统计分析' },
     { key: '/admin/logs', icon: <HistoryOutlined />, label: '操作日志' },
@@ -59,6 +63,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
   window: [
     { key: '/admin', icon: <DashboardOutlined />, label: '工作台' },
     { key: '/admin/appointment-calendar', icon: <CalendarOutlined />, label: '预约日历' },
+    { key: '/admin/appointments', icon: <UnorderedListOutlined />, label: '预约列表' },
     { key: '/admin/calling', icon: <SoundOutlined />, label: '叫号系统' },
     { key: '/admin/case-accept', icon: <FormOutlined />, label: '办件受理' },
   ],
@@ -67,7 +72,7 @@ const menuConfig: Record<UserRole, Array<{ key: string; icon: React.ReactNode; l
     { key: '/admin/pending-approval', icon: <ClockCircleOutlined />, label: '待我审批' },
     { key: '/admin/collaboration', icon: <SwapOutlined />, label: '协同待办' },
     { key: '/admin/approved', icon: <CheckCircleOutlined />, label: '我已审批' },
-    { key: '/admin/overdue-warning', icon: <ClockCircleOutlined />, label: '超期预警' },
+    { key: '/admin/overdue-warning', icon: <ClockCircleOutlined />, label: '超期预警中心' },
   ],
   citizen: [],
 };
@@ -138,6 +143,7 @@ function AdminLayout() {
             <Routes>
               <Route path="/" element={<AdminDashboard />} />
               <Route path="/appointment-calendar" element={<AppointmentCalendar />} />
+              <Route path="/appointments" element={<AppointmentList />} />
               <Route path="/service-items" element={<ServiceItems />} />
               <Route path="/departments" element={<Departments />} />
               <Route path="/users" element={<Users />} />
@@ -152,7 +158,7 @@ function AdminLayout() {
               <Route path="/pending-approval" element={<CaseReview />} />
               <Route path="/collaboration" element={<CaseCollaboration />} />
               <Route path="/approved" element={<CaseReview />} />
-              <Route path="/overdue-warning" element={<CaseReview />} />
+              <Route path="/overdue-warning" element={<OverdueWarning />} />
               <Route path="/logs" element={<OperationLogs />} />
               <Route path="*" element={<AdminDashboard />} />
             </Routes>

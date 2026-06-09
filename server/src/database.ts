@@ -245,6 +245,23 @@ export function initDatabase() {
       FOREIGN KEY (service_item_id) REFERENCES service_items(id) ON DELETE CASCADE,
       UNIQUE(user_id, service_item_id)
     );
+
+    CREATE TABLE IF NOT EXISTS case_urge_records (
+      id TEXT PRIMARY KEY,
+      case_id TEXT NOT NULL,
+      urge_user_id TEXT NOT NULL,
+      urge_user_name TEXT,
+      target_user_id TEXT,
+      target_user_name TEXT,
+      target_department_id TEXT,
+      target_department_name TEXT,
+      content TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE,
+      FOREIGN KEY (urge_user_id) REFERENCES users(id),
+      FOREIGN KEY (target_user_id) REFERENCES users(id),
+      FOREIGN KEY (target_department_id) REFERENCES departments(id)
+    );
   `);
 
   migrateDatabase();
@@ -259,6 +276,29 @@ function migrateDatabase() {
     if (!hasSubType) {
       db.prepare("ALTER TABLE notifications ADD COLUMN sub_type TEXT").run();
       console.log('数据库迁移：notifications 表已添加 sub_type 字段');
+    }
+
+    const urgeTableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='case_urge_records'").get() as any;
+    if (!urgeTableExists) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS case_urge_records (
+          id TEXT PRIMARY KEY,
+          case_id TEXT NOT NULL,
+          urge_user_id TEXT NOT NULL,
+          urge_user_name TEXT,
+          target_user_id TEXT,
+          target_user_name TEXT,
+          target_department_id TEXT,
+          target_department_name TEXT,
+          content TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE,
+          FOREIGN KEY (urge_user_id) REFERENCES users(id),
+          FOREIGN KEY (target_user_id) REFERENCES users(id),
+          FOREIGN KEY (target_department_id) REFERENCES departments(id)
+        );
+      `);
+      console.log('数据库迁移：case_urge_records 表已创建');
     }
   } catch (error) {
     console.error('数据库迁移失败：', error);

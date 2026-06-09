@@ -238,7 +238,63 @@ function seed() {
   });
   console.log(`   已创建 ${sampleCases.length} 个示例办件\n`);
 
-  console.log('7. 创建示例评价...');
+  console.log('7. 创建示例催办记录...');
+  const urgeStmt = db.prepare(`
+    INSERT OR IGNORE INTO case_urge_records 
+    (id, case_id, urge_user_id, urge_user_name, target_user_id, target_user_name, 
+     target_department_id, target_department_name, content, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const sampleUrgeRecords = [
+    {
+      id: uuidv4(),
+      caseId: sampleCases[0].id,
+      urgeUserId: users[0].id,
+      urgeUserName: '系统管理员',
+      targetUserId: users[3].id,
+      targetUserName: '王审批',
+      targetDeptId: depts[1].id,
+      targetDeptName: '市场监管局',
+      content: '该办件临近截止时间，请尽快处理审批事项。',
+      createdAt: dayjs().subtract(2, 'hour').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      caseId: sampleCases[0].id,
+      urgeUserId: users[0].id,
+      urgeUserName: '系统管理员',
+      targetUserId: null,
+      targetUserName: null,
+      targetDeptId: depts[1].id,
+      targetDeptName: '市场监管局',
+      content: '营业执照办理业务，请科室相关人员关注审批进度，确保按时办结。',
+      createdAt: dayjs().subtract(1, 'day').format('YYYY-MM-DD HH:mm:ss'),
+    },
+    {
+      id: uuidv4(),
+      caseId: sampleCases[2].id,
+      urgeUserId: users[0].id,
+      urgeUserName: '系统管理员',
+      targetUserId: users[3].id,
+      targetUserName: '王审批',
+      targetDeptId: depts[1].id,
+      targetDeptName: '市场监管局',
+      content: '食品经营许可证申请材料待审核，请及时跟进处理。',
+      createdAt: dayjs().subtract(30, 'minute').format('YYYY-MM-DD HH:mm:ss'),
+    },
+  ];
+
+  let urgeCount = 0;
+  sampleUrgeRecords.forEach(u => {
+    const result = urgeStmt.run(u.id, u.caseId, u.urgeUserId, u.urgeUserName,
+      u.targetUserId, u.targetUserName, u.targetDeptId, u.targetDeptName,
+      u.content, u.createdAt);
+    if (result.changes > 0) urgeCount++;
+  });
+  console.log(`   已创建 ${urgeCount} 条示例催办记录\n`);
+
+  console.log('8. 创建示例评价...');
   const evalStmt = db.prepare(`
     INSERT OR IGNORE INTO evaluations 
     (id, case_id, user_id, overall_rating, service_attitude_rating, processing_speed_rating, 

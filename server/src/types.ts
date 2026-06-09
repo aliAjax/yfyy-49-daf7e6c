@@ -98,3 +98,17 @@ export interface Case {
   created_at: string;
   updated_at: string;
 }
+
+export interface CaseUrgeRecord {
+  id: string;
+  case_id: string;
+  case_number?: string;
+  urge_user_id: string;
+  urge_user_name?: string;
+  target_user_id?: string;
+  target_user_name?: string;
+  target_department_id?: string;
+  target_department_name?: string;
+  content: string;
+  created_at: string;
+}
