@@ -30,6 +30,10 @@ export function resetDatabase() {
   db.exec(`
     DELETE FROM operation_logs;
     DELETE FROM notifications;
+    DELETE FROM evaluations;
+    DELETE FROM case_flows;
+    DELETE FROM case_materials;
+    DELETE FROM cases;
     DELETE FROM tickets;
     DELETE FROM appointments;
     DELETE FROM number_sources;

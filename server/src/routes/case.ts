@@ -4,6 +4,12 @@ import db from '../database';
 import { authMiddleware, requireRoles, AuthRequest } from '../middleware/auth';
 import dayjs from 'dayjs';
 import type { CaseStatus } from '../types';
+import {
+  applyCaseTransition,
+  insertCaseFlow,
+  insertOperationLog,
+  resolveMaterialReviewStatus,
+} from '../services/caseStateTransition';
 
 const router = Router();
 
@@ -74,17 +80,6 @@ function parseMaterialItems(input: any): any[] {
 function materialName(item: any, index: number) {
   if (typeof item === 'string') return item;
   return item?.name || item?.material_name || `材料${index + 1}`;
-}
-
-function refreshCaseMaterialStatus(caseId: string, fallbackStatus: CaseStatus) {
-  const allMaterials = db.prepare('SELECT status FROM case_materials WHERE case_id = ?').all(caseId) as any[];
-  if (allMaterials.length === 0) return fallbackStatus;
-
-  const hasRejected = allMaterials.some((m: any) => m.status === 'rejected');
-  if (hasRejected) return 'material_correction';
-
-  const hasPending = allMaterials.some((m: any) => m.status === 'pending');
-  return hasPending ? 'material_reviewing' : 'accepting';
 }
 
 function canAccessCaseDepartment(req: AuthRequest, departmentId?: string | null) {
@@ -290,18 +285,16 @@ router.post('/', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
       );
     });
 
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
-        from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, NULL, ?, ?, NULL, 'submit', ?, ?)
-    `).run(
-      uuidv4(),
-      id,
-      serviceItem.department_id,
-      req.user!.id,
-      initialStatus,
-      materialItems.length > 0 ? '提交申请，进入材料审核' : '提交申请'
-    );
+    insertCaseFlow(db, {
+      case_id: id,
+      from_department_id: null,
+      to_department_id: serviceItem.department_id,
+      from_user_id: req.user!.id,
+      to_user_id: null,
+      action: 'submit',
+      status: initialStatus,
+      comment: materialItems.length > 0 ? '提交申请，进入材料审核' : '提交申请',
+    });
 
     if (ticket_id) {
       db.prepare("UPDATE tickets SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
@@ -313,10 +306,13 @@ router.post('/', requireRoles('window', 'admin'), (req: AuthRequest, res) => {
 
   const caseItem = db.prepare('SELECT * FROM cases WHERE id = ?').get(id);
 
-  db.prepare(`
-    INSERT INTO operation_logs (user_id, user_name, action, module, detail)
-    VALUES (?, ?, '创建办件', '办件', ?)
-  `).run(req.user!.id, req.user!.name, `创建办件${caseNumber}`);
+  insertOperationLog(db, {
+    user_id: req.user!.id,
+    user_name: req.user!.name,
+    action: '创建办件',
+    module: '办件',
+    detail: `创建办件${caseNumber}`,
+  });
 
   res.status(201).json({ case: caseItem });
 });
@@ -348,22 +344,18 @@ router.post('/:id/material-review', requireRoles('window', 'approver', 'admin'),
       WHERE id = ?
     `).run(status, review_comment || null, req.user!.id, material_id);
 
-    const caseStatus = refreshCaseMaterialStatus(id, caseItem.status);
-    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(caseStatus, id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, ?, NULL, 'material_review', ?, ?)
-    `).run(
-      uuidv4(),
-      id,
-      req.user!.id,
-      caseStatus,
-      status === 'rejected'
-        ? `材料${(material as any).name}审核不通过：${review_comment || '需要补正'}`
-        : `材料${(material as any).name}审核通过`
-    );
+    const caseStatus = resolveMaterialReviewStatus(db, id, caseItem.status);
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: caseStatus,
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'material_review',
+        comment: status === 'rejected'
+          ? `材料${(material as any).name}审核不通过：${review_comment || '需要补正'}`
+          : `材料${(material as any).name}审核通过`,
+      },
+    });
   });
 
   tx();
@@ -444,9 +436,7 @@ router.post('/:id/material-batch-review', requireRoles('window', 'approver', 'ad
       );
     });
 
-    const caseStatus = refreshCaseMaterialStatus(id, caseItem.status);
-    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(caseStatus, id);
+    const caseStatus = resolveMaterialReviewStatus(db, id, caseItem.status);
 
     const summary = normalizedReviews.map((item) => {
       const material = materialMap.get(item.material_id) as any;
@@ -456,10 +446,15 @@ router.post('/:id/material-batch-review', requireRoles('window', 'approver', 'ad
       return `${material.name}通过${item.review_comment ? `：${item.review_comment}` : ''}`;
     }).join('；');
 
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, ?, NULL, 'material_batch_review', ?, ?)
-    `).run(uuidv4(), id, req.user!.id, caseStatus, `批量审核材料：${summary}`);
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: caseStatus,
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'material_batch_review',
+        comment: `批量审核材料：${summary}`,
+      },
+    });
   });
 
   tx();
@@ -509,20 +504,18 @@ router.post('/:id/materials/:materialId/correction', requireRoles('citizen'), (r
       WHERE id = ?
     `).run(file_url || null, correction_comment || null, materialId);
 
-    const caseStatus = refreshCaseMaterialStatus(id, 'material_reviewing');
-    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(caseStatus, id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, ?, NULL, 'material_correction_submit', ?, ?)
-    `).run(
-      uuidv4(),
-      id,
-      req.user!.id,
-      caseStatus,
-      `提交${material.name}补正材料${correction_comment ? `：${correction_comment}` : ''}`
-    );
+    const caseStatus = resolveMaterialReviewStatus(db, id, 'material_reviewing');
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: caseStatus,
+      allowedFrom: ['material_correction'],
+      invalidMessage: '当前办件状态不支持材料补正',
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'material_correction_submit',
+        comment: `提交${material.name}补正材料${correction_comment ? `：${correction_comment}` : ''}`,
+      },
+    });
   });
 
   tx();
@@ -546,25 +539,26 @@ router.post('/:id/accept', requireRoles('window', 'admin'), (req: AuthRequest, r
   }
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET status = 'reviewing', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, ?, NULL, 'accept', 'reviewing', ?)
-    `).run(uuidv4(), id, req.user!.id, comment || '已受理，进入审批环节');
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'reviewing',
+      allowedFrom: ['submitted', 'accepting'],
+      invalidMessage: '当前状态不支持受理',
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'accept',
+        comment: comment || '已受理，进入审批环节',
+      },
+      notification: {
+        user_id: caseItem.user_id,
+        title: '办件已受理',
+        content: `您的办件${caseItem.case_number}已受理`,
+        related_id: id,
+      },
+    });
   });
 
   tx();
-
-  if (caseItem.user_id) {
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件已受理', ?, ?)
-    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已受理`, id);
-  }
 
   res.json({ message: '受理成功' });
 });
@@ -588,27 +582,31 @@ router.post('/:id/approve', requireRoles('approver', 'admin'), (req: AuthRequest
   }
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET status = 'approved', current_handler_id = ?, result = ?, 
-        completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(req.user!.id, result || '审批通过', id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
-        from_user_id, to_user_id, action, status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, NULL, 'approve', 'approved', ?, CURRENT_TIMESTAMP)
-    `).run(uuidv4(), id, caseItem.department_id, caseItem.department_id, req.user!.id, comment || '审批通过');
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'approved',
+      allowedFrom: ['reviewing', 'cross_department'],
+      invalidMessage: '当前状态不支持审批',
+      updateSetSql: 'current_handler_id = ?, result = ?, completed_at = CURRENT_TIMESTAMP',
+      updateParams: [req.user!.id, result || '审批通过'],
+      flow: {
+        from_department_id: caseItem.department_id,
+        to_department_id: caseItem.department_id,
+        from_user_id: req.user!.id,
+        action: 'approve',
+        comment: comment || '审批通过',
+        handled_at: true,
+      },
+      notification: {
+        user_id: caseItem.user_id,
+        title: '办件审批通过',
+        content: `您的办件${caseItem.case_number}已审批通过`,
+        related_id: id,
+      },
+    });
   });
 
   tx();
-
-  if (caseItem.user_id) {
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件审批通过', ?, ?)
-    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已审批通过`, id);
-  }
 
   res.json({ message: '审批通过' });
 });
@@ -628,26 +626,29 @@ router.post('/:id/reject', requireRoles('approver', 'admin'), (req: AuthRequest,
   }
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET status = 'rejected', current_handler_id = ?, result = ?,
-        completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(req.user!.id, comment || '审批驳回', id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment, handled_at)
-      VALUES (?, ?, ?, NULL, 'reject', 'rejected', ?, CURRENT_TIMESTAMP)
-    `).run(uuidv4(), id, req.user!.id, comment || '审批驳回');
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'rejected',
+      allowedFrom: ['reviewing', 'cross_department'],
+      invalidMessage: '当前状态不支持驳回',
+      updateSetSql: 'current_handler_id = ?, result = ?, completed_at = CURRENT_TIMESTAMP',
+      updateParams: [req.user!.id, comment || '审批驳回'],
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'reject',
+        comment: comment || '审批驳回',
+        handled_at: true,
+      },
+      notification: {
+        user_id: caseItem.user_id,
+        title: '办件被驳回',
+        content: `您的办件${caseItem.case_number}被驳回：${comment || '审批驳回'}`,
+        related_id: id,
+      },
+    });
   });
 
   tx();
-
-  if (caseItem.user_id) {
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件被驳回', ?, ?)
-    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}被驳回：${comment || '审批驳回'}`, id);
-  }
 
   res.json({ message: '已驳回' });
 });
@@ -691,26 +692,22 @@ router.post('/:id/transfer', requireRoles('approver', 'admin'), (req: AuthReques
   }
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET department_id = ?, status = 'cross_department', 
-        current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(to_department_id, to_user_id || null, id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id, 
-        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'transfer', 'cross_department', ?, ?, CURRENT_TIMESTAMP)
-    `).run(
-      uuidv4(),
-      id,
-      caseItem.department_id,
-      to_department_id,
-      req.user!.id,
-      to_user_id || null,
-      caseItem.status,
-      comment || `跨科室流转${toUser ? `，指定${toUser.name}办理` : ''}`
-    );
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'cross_department',
+      updateSetSql: 'department_id = ?, current_handler_id = ?',
+      updateParams: [to_department_id, to_user_id || null],
+      flow: {
+        from_department_id: caseItem.department_id,
+        to_department_id,
+        from_user_id: req.user!.id,
+        to_user_id: to_user_id || null,
+        action: 'transfer',
+        previous_status: caseItem.status,
+        comment: comment || `跨科室流转${toUser ? `，指定${toUser.name}办理` : ''}`,
+        handled_at: true,
+      },
+    });
   });
 
   tx();
@@ -748,25 +745,24 @@ router.post('/:id/receive', requireRoles('approver', 'admin'), (req: AuthRequest
   `).get(id) as any;
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET current_handler_id = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(req.user!.id, id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id,
-        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'receive', 'cross_department', ?, ?, CURRENT_TIMESTAMP)
-    `).run(
-      uuidv4(),
-      id,
-      latestTransfer?.from_department_id || null,
-      caseItem.department_id,
-      latestTransfer?.from_user_id || null,
-      req.user!.id,
-      caseItem.status,
-      comment || '接收跨科室流转'
-    );
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'cross_department',
+      allowedFrom: ['cross_department'],
+      invalidMessage: '当前办件无需接收',
+      updateSetSql: 'current_handler_id = ?',
+      updateParams: [req.user!.id],
+      flow: {
+        from_department_id: latestTransfer?.from_department_id || null,
+        to_department_id: caseItem.department_id,
+        from_user_id: latestTransfer?.from_user_id || null,
+        to_user_id: req.user!.id,
+        action: 'receive',
+        previous_status: caseItem.status,
+        comment: comment || '接收跨科室流转',
+        handled_at: true,
+      },
+    });
   });
 
   tx();
@@ -821,27 +817,24 @@ router.post('/:id/return', requireRoles('approver', 'admin'), (req: AuthRequest,
     : 'reviewing';
 
   const tx = db.transaction(() => {
-    db.prepare(`
-      UPDATE cases SET department_id = ?, status = ?, current_handler_id = NULL,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(latestTransfer.from_department_id, restoreStatus, id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_department_id, to_department_id,
-        from_user_id, to_user_id, action, status, previous_status, comment, handled_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'return', ?, ?, ?, CURRENT_TIMESTAMP)
-    `).run(
-      uuidv4(),
-      id,
-      caseItem.department_id,
-      latestTransfer.from_department_id,
-      req.user!.id,
-      latestTransfer.from_user_id || null,
-      restoreStatus,
-      caseItem.status,
-      String(reason).trim()
-    );
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: restoreStatus as CaseStatus,
+      allowedFrom: ['cross_department'],
+      invalidMessage: '当前状态不支持退回上一科室',
+      updateSetSql: 'department_id = ?, current_handler_id = NULL',
+      updateParams: [latestTransfer.from_department_id],
+      flow: {
+        from_department_id: caseItem.department_id,
+        to_department_id: latestTransfer.from_department_id,
+        from_user_id: req.user!.id,
+        to_user_id: latestTransfer.from_user_id || null,
+        action: 'return',
+        previous_status: caseItem.status,
+        comment: String(reason).trim(),
+        handled_at: true,
+      },
+    });
   });
 
   tx();
@@ -872,13 +865,17 @@ router.post('/:id/materials', (req: AuthRequest, res) => {
       VALUES (?, ?, ?, ?, ?, 'pending')
     `).run(materialId, id, name, type || null, file_url || null);
 
-    db.prepare('UPDATE cases SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .run(refreshCaseMaterialStatus(id, 'material_reviewing'), id);
-
-    db.prepare(`
-      INSERT INTO case_flows (id, case_id, from_user_id, to_user_id, action, status, comment)
-      VALUES (?, ?, ?, NULL, 'material_create', 'material_reviewing', ?)
-    `).run(uuidv4(), id, req.user!.id, `新增材料${name}，进入材料审核`);
+    const caseStatus = resolveMaterialReviewStatus(db, id, 'material_reviewing');
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: caseStatus,
+      flow: {
+        from_user_id: req.user!.id,
+        action: 'material_create',
+        status: 'material_reviewing',
+        comment: `新增材料${name}，进入材料审核`,
+      },
+    });
   });
 
   tx();
@@ -900,22 +897,28 @@ router.post('/:id/complete', requireRoles('window', 'admin'), (req: AuthRequest,
     return res.status(400).json({ message: '仅审批通过的办件可以办结' });
   }
 
-  db.prepare(`
-    UPDATE cases SET status = 'completed', updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).run(id);
+  const tx = db.transaction(() => {
+    applyCaseTransition(db, {
+      caseItem,
+      toStatus: 'completed',
+      allowedFrom: ['approved'],
+      invalidMessage: '仅审批通过的办件可以办结',
+      afterCaseUpdate: () => {
+        if (caseItem.ticket_id) {
+          db.prepare("UPDATE tickets SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+            .run(caseItem.ticket_id);
+        }
+      },
+      notification: {
+        user_id: caseItem.user_id,
+        title: '办件已办结',
+        content: `您的办件${caseItem.case_number}已办结，请评价`,
+        related_id: id,
+      },
+    });
+  });
 
-  if (caseItem.ticket_id) {
-    db.prepare("UPDATE tickets SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .run(caseItem.ticket_id);
-  }
-
-  if (caseItem.user_id) {
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, content, related_id)
-      VALUES (?, ?, 'case', '办件已办结', ?, ?)
-    `).run(uuidv4(), caseItem.user_id, `您的办件${caseItem.case_number}已办结，请评价`, id);
-  }
+  tx();
 
   res.json({ message: '办结成功' });
 });
@@ -1118,10 +1121,13 @@ router.post('/warnings/:id/remind', requireRoles('window', 'approver', 'admin'),
       `).run(uuidv4(), recipient.id, remindContent, caseItem.id);
     }
 
-    db.prepare(`
-      INSERT INTO operation_logs (user_id, user_name, action, module, detail)
-      VALUES (?, ?, '催办办件', '超期预警', ?)
-    `).run(req.user!.id, req.user!.name, `催办办件${caseItem.case_number}`);
+    insertOperationLog(db, {
+      user_id: req.user!.id,
+      user_name: req.user!.name,
+      action: '催办办件',
+      module: '超期预警',
+      detail: `催办办件${caseItem.case_number}`,
+    });
   });
 
   tx();
